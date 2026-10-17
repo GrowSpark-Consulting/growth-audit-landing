@@ -1,0 +1,291 @@
+import { Collection, ObjectId } from "mongodb";
+import { randomBytes } from "crypto";
+import { getDb, isMongoConfigured } from "./db";
+
+export const FIXED_ORDER_AMOUNT = 999.0;
+export const FIXED_ORDER_CURRENCY = "INR";
+export const FIXED_PRODUCT_NAME = "Business Growth Audit";
+
+export const TEAM_SIZES = ["1-5", "6-15", "16-30", "31-75", "76+"] as const;
+export const INDUSTRIES = [
+  "Professional services",
+  "Technology & software",
+  "Manufacturing",
+  "Retail & e-commerce",
+  "Healthcare & wellness",
+  "Financial services",
+  "Education & training",
+  "Construction & real estate",
+  "Hospitality & food",
+  "Other",
+] as const;
+export const REVENUES = [
+  "Below ₹50 lakh",
+  "₹50 lakh-₹1 crore",
+  "₹1-2 crore",
+  "₹2-3 crore",
+  "₹3-5 crore",
+  "Above ₹5 crore",
+  "Prefer to discuss",
+] as const;
+export const CHALLENGES = [
+  "Revenue is growing, but profit is not",
+  "Stuck at the same revenue for years",
+  "My revenue is going down every year",
+  "Another business challenge",
+] as const;
+
+export type OrderStatus = "PENDING" | "PAID" | "FAILED" | "CANCELLED";
+
+export interface CustomerData {
+  name: string;
+  phone: string;
+  email: string;
+  company: string;
+  website?: string;
+  team: string;
+  industry: string;
+  revenue: string;
+  businessProblem: string;
+}
+
+export interface PayUDetails {
+  mihpayid?: string;
+  mode?: string;
+  status?: string;
+  unmappedstatus?: string;
+  bankRefNum?: string;
+  bankcode?: string;
+  error?: string;
+  errorMessage?: string;
+  additionalCharges?: string;
+  rawResponseHash?: string;
+  verifiedAt?: Date;
+}
+
+export interface OrderDocument {
+  _id?: ObjectId;
+  txnid: string;
+  amount: number;
+  currency: string;
+  productInfo: string;
+  customer: CustomerData;
+  status: OrderStatus;
+  payu?: PayUDetails;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+const ORDERS_COLLECTION = "orders";
+
+export async function getOrdersCollection(): Promise<Collection<OrderDocument>> {
+  const db = await getDb();
+  return db.collection<OrderDocument>(ORDERS_COLLECTION);
+}
+
+let indexesEnsured = false;
+
+/**
+ * Ensures unique and search indexes on the orders collection.
+ * Called automatically during order creation or can be run as a setup task.
+ */
+export async function ensureOrderIndexes(): Promise<void> {
+  if (indexesEnsured || !isMongoConfigured()) return;
+  const col = await getOrdersCollection();
+  await col.createIndex({ txnid: 1 }, { unique: true, name: "uniq_txnid" });
+  await col.createIndex({ createdAt: -1 }, { name: "idx_created_at" });
+  await col.createIndex({ status: 1 }, { name: "idx_status" });
+  indexesEnsured = true;
+}
+
+/**
+ * Generates an unpredictable, merchant-unique transaction identifier.
+ * Example format: GSA_1713340000000_a1b2c3d4
+ */
+export function generateTransactionId(): string {
+  const timestamp = Date.now();
+  const randomSuffix = randomBytes(4).toString("hex");
+  return `GSA_${timestamp}_${randomSuffix}`;
+}
+
+/**
+ * Validates and normalizes customer input from the lead form.
+ */
+export function validateCustomerInput(input: Partial<CustomerData>): {
+  valid: boolean;
+  errors: string[];
+  data?: CustomerData;
+} {
+  const errors: string[] = [];
+
+  const name = (input.name ?? "").trim();
+  if (!name || name.length < 2 || name.length > 100) {
+    errors.push("Full name is required (between 2 and 100 characters).");
+  }
+
+  const rawPhone = (input.phone ?? "").trim();
+  // Strip spaces, dashes, parentheses
+  const sanitizedPhone = rawPhone.replace(/[\s\-()]/g, "");
+  const digitsOnly = sanitizedPhone.replace(/^\+/, "");
+  if (!/^\+?\d{10,15}$/.test(sanitizedPhone) || digitsOnly.length < 10) {
+    errors.push("A valid phone number with at least 10 digits is required.");
+  }
+
+  const email = (input.email ?? "").trim().toLowerCase();
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!email || !emailRegex.test(email) || email.length > 150) {
+    errors.push("A valid work email address is required.");
+  }
+
+  const company = (input.company ?? "").trim();
+  if (!company || company.length < 2 || company.length > 100) {
+    errors.push("Company name is required (between 2 and 100 characters).");
+  }
+
+  let website: string | undefined = (input.website ?? "").trim();
+  if (website) {
+    if (!website.startsWith("http://") && !website.startsWith("https://")) {
+      website = `https://${website}`;
+    }
+    try {
+      new URL(website);
+    } catch {
+      errors.push("Please provide a valid website URL or leave blank.");
+    }
+  } else {
+    website = undefined;
+  }
+
+  const team = (input.team ?? "").trim();
+  if (!TEAM_SIZES.includes(team as (typeof TEAM_SIZES)[number])) {
+    errors.push("Please select a valid team size option.");
+  }
+
+  const industry = (input.industry ?? "").trim();
+  if (!INDUSTRIES.includes(industry as (typeof INDUSTRIES)[number])) {
+    errors.push("Please select a valid industry option.");
+  }
+
+  const revenue = (input.revenue ?? "").trim();
+  if (!REVENUES.includes(revenue as (typeof REVENUES)[number])) {
+    errors.push("Please select a valid revenue range option.");
+  }
+
+  const businessProblem = (input.businessProblem ?? "").trim();
+  if (!CHALLENGES.includes(businessProblem as (typeof CHALLENGES)[number])) {
+    errors.push("Please select a valid business challenge option.");
+  }
+
+  if (errors.length > 0) {
+    return { valid: false, errors };
+  }
+
+  return {
+    valid: true,
+    errors: [],
+    data: {
+      name,
+      phone: rawPhone,
+      email,
+      company,
+      website,
+      team,
+      industry,
+      revenue,
+      businessProblem,
+    },
+  };
+}
+
+/**
+ * Creates and persists a new pending order.
+ */
+export async function createOrder(customer: CustomerData): Promise<OrderDocument> {
+  const txnid = generateTransactionId();
+  const now = new Date();
+
+  const orderDoc: OrderDocument = {
+    txnid,
+    amount: FIXED_ORDER_AMOUNT,
+    currency: FIXED_ORDER_CURRENCY,
+    productInfo: FIXED_PRODUCT_NAME,
+    customer,
+    status: "PENDING",
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  if (!isMongoConfigured()) {
+    throw new Error("MongoDB must be configured to create a payable order.");
+  }
+
+  await ensureOrderIndexes();
+  const col = await getOrdersCollection();
+  const result = await col.insertOne(orderDoc);
+  orderDoc._id = result.insertedId;
+
+  return orderDoc;
+}
+
+/**
+ * Retrieves an order by its unique transaction id.
+ */
+export async function findOrderByTxnid(txnid: string): Promise<OrderDocument | null> {
+  if (!isMongoConfigured()) return null;
+  const col = await getOrdersCollection();
+  return col.findOne({ txnid });
+}
+
+/**
+ * Updates an order status and PayU payment details idempotently.
+ * Transitions from PENDING -> PAID or PENDING -> FAILED.
+ * Once marked PAID, an order cannot be overwritten to FAILED by duplicate callbacks.
+ */
+export async function updateOrderStatus(
+  txnid: string,
+  newStatus: Exclude<OrderStatus, "PENDING" | "CANCELLED">,
+  payuDetails: PayUDetails
+): Promise<{ success: boolean; order: OrderDocument | null; alreadyPaid?: boolean }> {
+  if (!isMongoConfigured()) {
+    return { success: false, order: null };
+  }
+
+  const col = await getOrdersCollection();
+  const existing = await col.findOne({ txnid });
+
+  if (!existing) {
+    return { success: false, order: null };
+  }
+
+  if (existing.status === "PAID") {
+    // Idempotency: Already paid, do not revert or re-process
+    return { success: true, order: existing, alreadyPaid: true };
+  }
+
+  const now = new Date();
+  const updateResult = await col.findOneAndUpdate(
+    { txnid, status: { $ne: "PAID" } },
+    {
+      $set: {
+        status: newStatus,
+        payu: {
+          ...existing.payu,
+          ...payuDetails,
+          verifiedAt: now,
+        },
+        updatedAt: now,
+      },
+    },
+    { returnDocument: "after" }
+  );
+
+  // A concurrent success callback may have changed the row to PAID after the
+  // initial read. Read the winning state instead of returning the stale copy.
+  const persistedOrder = updateResult ?? (await col.findOne({ txnid }));
+
+  return {
+    success: Boolean(persistedOrder),
+    order: persistedOrder,
+    alreadyPaid: !updateResult && persistedOrder?.status === "PAID",
+  };
+}
