@@ -4,12 +4,22 @@ import {
   buildPayUPaymentPayload,
   isPayUConfigured,
 } from "@/lib/payu";
+import { getSafeCheckoutErrorClass } from "@/lib/checkout-diagnostics";
 
 export const runtime = "nodejs";
 
 export async function POST(request: NextRequest) {
+  let stage:
+    | "request_parsing"
+    | "request_validation"
+    | "configuration"
+    | "order_creation"
+    | "payu_payload"
+    | "response" = "request_parsing";
+
   try {
     const body = await request.json();
+    stage = "request_validation";
     const validation = validateCustomerInput(body);
     if (!validation.valid || !validation.data) {
       return NextResponse.json(
@@ -18,6 +28,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    stage = "configuration";
     // Invalid or incomplete mode-specific configuration must never create an
     // order. Production mode only reads its dedicated production credentials.
     if (!isPayUConfigured()) {
@@ -31,7 +42,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    stage = "order_creation";
     const order = await createOrder(validation.data);
+
+    stage = "payu_payload";
     const checkout = buildPayUPaymentPayload({
       txnid: order.txnid,
       amount: order.amount,
@@ -41,6 +55,7 @@ export async function POST(request: NextRequest) {
       phone: order.customer.phone,
     });
 
+    stage = "response";
     return NextResponse.json({
       ok: true,
       txnid: order.txnid,
@@ -49,8 +64,11 @@ export async function POST(request: NextRequest) {
       // signature. The merchant salt is never returned to the client.
       params: checkout.params,
     });
-  } catch {
-    console.error("[PAYMENT_INITIATE] Unable to prepare checkout.");
+  } catch (error: unknown) {
+    console.error("[PAYMENT_INITIATE] Checkout preparation failed.", {
+      stage,
+      errorClass: getSafeCheckoutErrorClass(error),
+    });
     return NextResponse.json(
       {
         ok: false,
