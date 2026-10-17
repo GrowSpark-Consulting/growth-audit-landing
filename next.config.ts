@@ -1,12 +1,17 @@
+
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
-  // Dev only: allow opening `next dev` from this machine's LAN address (phones, split-view tests).
-  // Without it Next blocks client JS, so the countdown and sticky CTA never hydrate.
-  allowedDevOrigins: ["172.20.176.1"],
+
+  // Allow local network and ngrok origins during development.
+  allowedDevOrigins: [
+    "172.20.176.1",
+    "reassure-among-employed.ngrok-free.dev",
+  ],
+
   experimental: {
-    // Lets us render a styled 404 even though each route group has its own root layout.
+    // Lets us render a styled 404 with route groups using separate root layouts.
     globalNotFound: true,
   },
 };
