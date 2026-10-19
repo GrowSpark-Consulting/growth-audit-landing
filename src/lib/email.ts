@@ -139,3 +139,78 @@ ${rows
     text,
   });
 }
+
+// ---- Free landing page emails (no payment details of any kind) ----------------
+
+export interface FreeSubmissionEmailInput {
+  submissionId: string;
+  customer: OrderDocument["customer"];
+}
+
+export function freeEmailIdempotencyKey(kind: "applicant" | "team", submissionId: string): string {
+  return `free-audit/${kind}/${submissionId}`;
+}
+
+/** Never throws. Returns true only if Resend accepted the message. */
+export async function sendFreeApplicantConfirmationEmail(
+  submission: FreeSubmissionEmailInput
+): Promise<boolean> {
+  const { customer, submissionId } = submission;
+  const text = [
+    `Hi ${customer.name},`,
+    "",
+    "Thank you. We have received your request for a Business Growth Audit.",
+    "",
+    "What happens next: our team will review your details and contact you shortly to discuss fit and next steps.",
+    "",
+    "GrowSpark Consulting",
+  ].join("\n");
+  const html = `<div style="font-family:Arial,sans-serif;max-width:560px;color:#1a1a1a;line-height:1.5">
+<p>Hi ${escapeHtml(customer.name)},</p>
+<p>Thank you. We have received your request for a <strong>Business Growth Audit</strong>.</p>
+<p><strong>What happens next:</strong> our team will review your details and contact you shortly to discuss fit and next steps.</p>
+<p>GrowSpark Consulting</p>
+</div>`;
+
+  return send("Free applicant confirmation", submissionId, freeEmailIdempotencyKey("applicant", submissionId), {
+    to: customer.email,
+    subject: "We received your Business Growth Audit request",
+    html,
+    text,
+  });
+}
+
+/** Never throws. Returns true only if Resend accepted the message. */
+export async function sendFreeTeamNotificationEmail(
+  submission: FreeSubmissionEmailInput
+): Promise<boolean> {
+  const { customer, submissionId } = submission;
+  const rows: [string, string][] = [
+    ["Name", customer.name],
+    ["Company", customer.company],
+    ["Phone", customer.phone],
+    ["Email", customer.email],
+    ["Website", customer.website ?? "-"],
+    ["Team size", customer.team],
+    ["Industry", customer.industry],
+    ["Revenue", customer.revenue],
+    ["Business challenge", customer.businessProblem],
+    ["Submission reference", submissionId],
+  ];
+  const text = ["New free Business Growth Audit request", "", ...rows.map(([k, v]) => `${k}: ${v}`)].join("\n");
+  const html = `<div style="font-family:Arial,sans-serif;color:#1a1a1a">
+<h2>New free Business Growth Audit request</h2>
+<table cellpadding="6" style="border-collapse:collapse">
+${rows
+  .map(([k, v]) => `<tr><td style="font-weight:bold;vertical-align:top">${escapeHtml(k)}</td><td>${escapeHtml(v)}</td></tr>`)
+  .join("\n")}
+</table>
+</div>`;
+
+  return send("Free team notification", submissionId, freeEmailIdempotencyKey("team", submissionId), {
+    to: TEAM_ADDRESSES,
+    subject: `New free audit request: ${customer.name} (${customer.company})`,
+    html,
+    text,
+  });
+}

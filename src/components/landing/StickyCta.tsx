@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 
-export function StickyCta() {
+export function StickyCta({ variant = "paid" }: { variant?: "paid" | "free" }) {
   const [visible, setVisible] = useState(false);
   const [inForm, setInForm] = useState(false);
 
@@ -32,10 +32,12 @@ export function StickyCta() {
       <span>Ready to find your growth constraint?</span>
       <a href="#name">
         <span>Request your audit</span>
-        <span className="cta-price">
-          <s>₹10,000</s>
-          <b>₹999</b>
-        </span>
+        {variant === "paid" && (
+          <span className="cta-price">
+            <s>₹10,000</s>
+            <b>₹999</b>
+          </span>
+        )}
         <span aria-hidden="true">↗</span>
       </a>
     </div>

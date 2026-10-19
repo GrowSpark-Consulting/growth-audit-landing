@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState, type FormEvent } from "react";
+import { submitFreeRequest } from "@/lib/free-submit-client";
 
 const TEAM_SIZES = ["1-5", "6-15", "16-30", "31-75", "76+"];
 const INDUSTRIES = [
@@ -31,16 +32,59 @@ const CHALLENGES = [
   "Another business challenge",
 ];
 
-export function LeadForm() {
+export function LeadForm({ variant = "paid" }: { variant?: "paid" | "free" }) {
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const messageRef = useRef<HTMLDivElement>(null);
 
+  const [submitted, setSubmitted] = useState(false);
+
+  function readPayload(form: HTMLFormElement) {
+    const formData = new FormData(form);
+    return {
+      name: formData.get("name"),
+      phone: formData.get("phone"),
+      email: formData.get("email"),
+      company: formData.get("company"),
+      website: formData.get("website") || undefined,
+      team: formData.get("team"),
+      industry: formData.get("industry"),
+      revenue: formData.get("revenue"),
+      businessProblem: formData.get("businessProblem"),
+    };
+  }
+
+  /** Free workflow: saved to the CRM server-side; there is no checkout step. */
+  async function submitFree(form: HTMLFormElement) {
+    setSubmitting(true);
+    setErrorMessage(null);
+    setStatusMessage("Submitting your request...");
+    // Success is shown only when the server reports the Lead was saved to the CRM.
+    const outcome = await submitFreeRequest(readPayload(form));
+    if (outcome.ok) {
+      setStatusMessage(
+        "Thank you. Your request has been received, and our team will be in touch shortly with next steps."
+      );
+      setSubmitted(true);
+    } else {
+      setErrorMessage(outcome.message);
+      setStatusMessage(null);
+    }
+    setSubmitting(false);
+    requestAnimationFrame(() =>
+      messageRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" })
+    );
+  }
+
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const form = e.currentTarget;
     if (!form.reportValidity()) return;
+    if (variant === "free") {
+      if (!submitted) await submitFree(form);
+      return;
+    }
 
     setSubmitting(true);
     setErrorMessage(null);
@@ -120,9 +164,11 @@ export function LeadForm() {
     <form className="form-card" id="leadForm" onSubmit={onSubmit}>
       <h3>Request a Growth Audit conversation</h3>
       <p>Complete the details below and our team can follow up with context.</p>
-      <p className="form-price">
-        Current audit offer: <strong>₹999</strong> <span>Regular price <s>₹10,000</s></span>
-      </p>
+      {variant === "paid" && (
+        <p className="form-price">
+          Current audit offer: <strong>₹999</strong> <span>Regular price <s>₹10,000</s></span>
+        </p>
+      )}
       <div className="fields">
         <div className="field">
           <label htmlFor="name">Your name *</label>
@@ -237,8 +283,13 @@ export function LeadForm() {
           </select>
         </div>
       </div>
-      <button className="btn" type="submit" disabled={submitting}>
-        {submitting ? (
+      <button className="btn" type="submit" disabled={submitting || submitted}>
+        {variant === "free" ? (
+          <>
+            {submitting ? "Submitting..." : "Request Your Free Growth Audit"}{" "}
+            <span className="arrow">↗</span>
+          </>
+        ) : submitting ? (
           <>Connecting to PayU Checkout...</>
         ) : (
           <>
