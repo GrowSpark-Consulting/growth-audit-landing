@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
 import {
   findOrderByTxnid,
   updateOrderStatus,
@@ -11,6 +11,7 @@ import {
   type PayUResponseData,
 } from "@/lib/payu";
 import { processPayUCallback } from "@/lib/payu-callback";
+import { syncOrderToZohoSafely } from "@/lib/zoho-sync";
 
 export const runtime = "nodejs";
 
@@ -44,6 +45,10 @@ export async function POST(request: NextRequest) {
     } else {
       redirectUrl.searchParams.set("token", result.token);
       redirectUrl.searchParams.set("status", result.status === "PAID" ? "success" : "failed");
+      // Runs only for hash-verified callbacks. A verified PAID order upgrades the
+      // Lead to "Growth Audit Paid"; repeated callbacks resolve to a no-op.
+      const verifiedTxnid = result.txnid;
+      after(() => syncOrderToZohoSafely(verifiedTxnid, { lockRetries: 3 }));
     }
 
     return NextResponse.redirect(redirectUrl, 303);

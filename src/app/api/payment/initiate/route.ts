@@ -1,10 +1,11 @@
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
 import { validateCustomerInput, createOrder } from "@/lib/orders";
 import {
   buildPayUPaymentPayload,
   isPayUConfigured,
 } from "@/lib/payu";
 import { getSafeCheckoutErrorClass } from "@/lib/checkout-diagnostics";
+import { syncOrderToZohoSafely } from "@/lib/zoho-sync";
 
 export const runtime = "nodejs";
 
@@ -44,6 +45,9 @@ export async function POST(request: NextRequest) {
 
     stage = "order_creation";
     const order = await createOrder(validation.data);
+    // The submission is persisted; the CRM Lead ("Growth Audit Free") is created
+    // after the response so Zoho latency or outages never block checkout.
+    after(() => syncOrderToZohoSafely(order.txnid));
 
     stage = "payu_payload";
     const checkout = buildPayUPaymentPayload({
