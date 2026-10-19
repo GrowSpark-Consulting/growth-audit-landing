@@ -8,6 +8,10 @@
     {
       "path": "/api/internal/zoho-sync-retry",
       "schedule": "30 3 * * *"
+    },
+    {
+      "path": "/api/cron/retry-free-emails",
+      "schedule": "0 5 * * *"
     }
   ]
 }

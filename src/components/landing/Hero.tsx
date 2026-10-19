@@ -1,4 +1,4 @@
-export function Hero() {
+export function Hero({ variant = "paid" }: { variant?: "paid" | "free" }) {
   return (
     <section className="hero">
       <div className="wrap hero-grid">
@@ -10,6 +10,7 @@ export function Hero() {
             Be the one who isn’t. When revenue stalls, we find what is holding growth back and work alongside your
             team like an in-house growth partner to make the next moves clear.
           </p>
+          {variant === "paid" && (
           <div
             className="price-offer"
             aria-label="Business Growth Audit: regular price ₹10,000, offer price ₹999"
@@ -31,6 +32,7 @@ export function Hero() {
               </div>
             </div>
           </div>
+          )}
           <div className="hero-actions">
             <a className="btn" href="#name">
               Find what’s holding you back <span className="arrow">↗</span>

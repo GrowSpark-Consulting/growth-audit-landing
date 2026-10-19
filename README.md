@@ -226,3 +226,53 @@ Because PayU Hosted Checkout redirects back via server-to-server HTTP POST callb
    - `ZOHO_CLIENT_ID`, `ZOHO_CLIENT_SECRET`, `ZOHO_REFRESH_TOKEN`, `ZOHO_ACCOUNTS_URL` and `CRON_SECRET` (see [Zoho CRM integration](#zoho-crm-integration))
 3. Add custom domain `growthaudit.growsparkconsulting.com` and point DNS CNAME to Vercel. Set `NEXT_PUBLIC_SITE_URL` to that public HTTPS origin; production callbacks reject localhost and tunnel hosts.
 4. Review the production configuration and callback URL before enabling production checkout. Do not use sandbox credentials or endpoints for live transactions.
+
+---
+
+## Free landing page (`growthaudit-free.growsparkconsulting.com`)
+
+A second variant of the same page with no price, countdown or checkout. It lives in the same deployment and is selected by hostname.
+
+### How it is isolated from the paid workflow
+- `src/proxy.ts` (decision logic in `src/lib/host-routing.ts`, matcher limited to the routes it touches):
+  - **Free host:** `/` is rewritten to `/free`; `/api/payment/*`, `/api/orders/*` and `/thank-you` return 404; `/free` redirects to `/`.
+  - **Paid host:** unchanged, except `/free` and `/api/free-submit` return 404. Localhost and Vercel preview hosts can reach both variants for testing.
+- Page: `src/app/(free)/free/` (own root layout, reuses `landing.css`; `free.css` removes the space reserved for the countdown banner).
+- Shared components take `variant="free"` (`Hero`, `StickyCta`, `LeadForm`); the default is the paid variant, so the paid page renders as before.
+- Submit: `POST /api/free-submit` -> `src/lib/free-submissions.ts`. It never creates an order, never contacts the payment gateway, and stores records in a separate Mongo collection, `free_submissions`.
+
+### Submission flow
+1. Validate (same rules as the paid form) and rate-limit (best effort, per server instance).
+2. Save a `free_submissions` record. See "Deduplication" below.
+3. Create or find the Zoho Lead (Lead Source `Growth Audit Free Page`) under a lease so concurrent requests cannot create two. **The browser shows the success message only when the server answers `{ ok: true }`, and the server does that only after Zoho confirmed the Lead.** Any CRM error produces an error message, no success state and no email.
+4. Send the applicant confirmation and the team notification (existing Resend integration and the three team addresses in `src/lib/email.ts`; no payment wording).
+
+### Deduplication
+- An **identical** submission (same content after trimming/lower-casing, phone formatting ignored) within 24 hours is a retry: it reuses the same record, so no second Lead, Note or email.
+- A submission with **any changed field** is a new record, even within 24 hours. It is attached to the applicant's existing Zoho Lead (by the Lead ID stored on their earlier record, falling back to Zoho's email search) as a Note containing the new details, and the applicant and team get emails for it. The existing Lead's fields and Lead Source are not modified.
+- An identical submission after 24 hours is treated as a new request in the same way.
+
+### Lead Source rules
+- `Growth Audit Free Page` is set only when a free-page submission creates a new Lead. An existing Lead keeps its source (paid or otherwise).
+- On the paid page, an unpaid or failed checkout never overwrites `Growth Audit Free Page`; only a server-verified payment upgrades it to `Growth Audit Paid`.
+
+### Failure and recovery behaviour
+| Situation | Result |
+|---|---|
+| Zoho credentials missing or Zoho down | Error shown, nothing recorded as saved, no email. Resubmitting reuses the same record and creates the Lead once. |
+| `Growth Audit Free Page` missing from the picklist | Same as above (`LEAD_SOURCE_NOT_IN_PICKLIST` in the logs). |
+| MongoDB down before anything is saved | Error shown; Zoho is never called. |
+| Zoho created the Lead, then MongoDB failed to record its ID | Recording is retried 3 times. If it still fails, the applicant is shown success (the Lead exists in the CRM) and the log shows `CRM_CONFIRMED_BUT_NOT_RECORDED` with the submission and Lead IDs. No emails are sent for that submission until it is recorded. A later submission from the applicant reuses the same Lead (Zoho's email duplicate check) and sends the emails. **Operations should alert on that log line**, because the team email will not be sent automatically. |
+| Email provider fails | The submission stays successful. Each email is claimed with a lease and marked sent only when Resend accepts it; `/api/cron/retry-free-emails` (daily) re-sends what is unsent. Resend idempotency keys (`free-audit/<kind>/<submissionId>`) prevent duplicates if a send succeeded but its bookkeeping failed. |
+
+### Configuration still required (nothing below has been done by the code)
+1. **Zoho CRM picklist.** Setup -> Customization -> Modules and Fields -> Leads -> Fields (or the layout) -> Lead Source -> add the value exactly `Growth Audit Free Page` (same capitalisation, no trailing space) and save/publish the layout. Keep the existing `Growth Audit Free` and `Growth Audit Paid` values. The picklist is cached for a few minutes, so allow a short delay. Until this is done, every free submission shows an error and creates nothing.
+2. **Vercel domain.** In the Vercel project that serves the paid site: Settings -> Domains -> Add `growthaudit-free.growsparkconsulting.com` (assign to Production; do not redirect it to the paid domain).
+3. **DNS** at the `growsparkconsulting.com` DNS provider: add the record Vercel displays for the new domain, typically `CNAME  growthaudit-free  ->  cname.vercel-dns.com` (use the exact value Vercel shows). Wait for verification and automatic HTTPS.
+4. **Production environment variables.** The free page needs no new variables. Confirm these already exist in Production for the same project: `MONGODB_URI`, `MONGODB_DB_NAME`, `ZOHO_CLIENT_ID`, `ZOHO_CLIENT_SECRET`, `ZOHO_REFRESH_TOKEN`, `ZOHO_ACCOUNTS_URL` (and `ZOHO_API_VERSION` if used), `RESEND_API_KEY` (used by the paid emails but missing from `.env.example`), and `CRON_SECRET` (at least 16 characters, required by the cron routes). Optional: `NEXT_PUBLIC_FREE_SITE_URL` (defaults to `https://growthaudit-free.growsparkconsulting.com`).
+5. **Resend.** The sending domain `growsparkconsulting.com` must already be verified (it is used by the paid emails).
+6. **Cron.** `vercel.json` registers `/api/cron/retry-free-emails` (daily 05:00 UTC); it takes effect on the next deployment. Vercel Cron sends `Authorization: Bearer $CRON_SECRET` automatically.
+7. **MongoDB indexes** on `free_submissions` are created automatically on first use (unique `submissionId` and `dedupeKey`, plus lookup indexes). The database user needs permission to create indexes, or create them manually.
+
+### SEO
+The free layout sets its canonical and Open Graph URLs to `https://growthaudit-free.growsparkconsulting.com/`; the paid layout is unchanged and the paid host never serves `/free`. The free page is currently **indexable**; set `FREE_PAGE_INDEXABLE = false` in `src/lib/site.ts` to add `noindex`. The two pages are near-duplicates, so keep the self-referencing canonicals.
