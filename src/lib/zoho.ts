@@ -2,8 +2,9 @@ import type { CustomerData } from "./orders";
 
 export const LEAD_SOURCE_FREE = "Growth Audit Free";
 export const LEAD_SOURCE_PAID = "Growth Audit Paid";
-/** Submissions from the standalone free landing page (never used by the paid workflow). */
-export const LEAD_SOURCE_FREE_PAGE = "Growth Audit Free Page";
+/** Zoho Free edition cannot add picklist values, so free-page Leads use LEAD_SOURCE_FREE and
+ * are told apart from unpaid paid-page checkouts by a Note with this title. */
+export const FREE_PAGE_NOTE_TITLE = "Submitted via the free landing page";
 export type ZohoLeadSource = typeof LEAD_SOURCE_FREE | typeof LEAD_SOURCE_PAID;
 
 const REQUEST_TIMEOUT_MS = 8_000;
@@ -486,10 +487,14 @@ function paymentNote(input: PushLeadInput): string {
   return lines.join("\n");
 }
 
-function submissionNote(input: Pick<PushLeadInput, "customer" | "submissionRef">, previousLeadSource?: string): string {
+function submissionNote(
+  input: Pick<PushLeadInput, "customer" | "submissionRef">,
+  previousLeadSource?: string,
+  heading = "Growth Audit form submission"
+): string {
   const { customer } = input;
   const lines = [
-    `Growth Audit form submission (reference ${input.submissionRef}).`,
+    `${heading} (reference ${input.submissionRef}).`,
     `Name: ${customer.name}`,
     `Email: ${customer.email}`,
     `Phone: ${customer.phone}`,
@@ -512,15 +517,11 @@ async function mergeIntoExistingLead(
   const effective: ZohoLeadSource =
     input.target === LEAD_SOURCE_PAID || existingValue === paidValue ? LEAD_SOURCE_PAID : LEAD_SOURCE_FREE;
   const desired = mapCustomerToZohoLead(input.customer, picklist.get(effective) ?? effective);
-  // An unpaid or failed checkout must not relabel a Lead that came from the free page.
-  // A verified payment (target Paid) still upgrades it.
-  const freePageValue = picklist.get(LEAD_SOURCE_FREE_PAGE) ?? LEAD_SOURCE_FREE_PAGE;
-  const keepsFreePageSource = input.target !== LEAD_SOURCE_PAID && existingValue === freePageValue;
 
   // Existing CRM data wins: only Lead_Source is managed here, other fields are
   // filled when empty, and the full new submission is preserved as a Note.
   const patch: Partial<ZohoLeadFields> = {};
-  if (!keepsFreePageSource && existingValue !== desired.Lead_Source) patch.Lead_Source = desired.Lead_Source;
+  if (existingValue !== desired.Lead_Source) patch.Lead_Source = desired.Lead_Source;
   if (!existing.firstName && desired.First_Name) patch.First_Name = desired.First_Name;
   if (!existing.mobile) patch.Mobile = desired.Mobile;
   if (!existing.company) patch.Company = desired.Company;
@@ -554,7 +555,7 @@ async function findPreferredLead(email: string, picklist: Map<string, string>): 
       matches: leads.length,
     });
   }
-  const ours = new Set([LEAD_SOURCE_PAID, LEAD_SOURCE_FREE, LEAD_SOURCE_FREE_PAGE].map((value) => picklist.get(value) ?? value));
+  const ours = new Set([LEAD_SOURCE_PAID, LEAD_SOURCE_FREE].map((value) => picklist.get(value) ?? value));
   const rank = (lead: ZohoLeadSnapshot) => {
     const value = lead.leadSource ? picklist.get(lead.leadSource) ?? lead.leadSource : "";
     if (value === (picklist.get(LEAD_SOURCE_PAID) ?? LEAD_SOURCE_PAID)) return 0;
@@ -618,21 +619,23 @@ export interface PushFreePageLeadResult {
 }
 
 /**
- * Creates the Zoho Lead for a free-page submission, tagged "Growth Audit Free Page".
- * Never creates a second Lead for the same email and never changes the Lead Source of an
- * existing Lead (paid or otherwise); the new submission is attached as a Note instead.
+ * Creates the Zoho Lead for a free-page submission with Lead Source "Growth Audit Free" and a
+ * "Submitted via the free landing page" Note. Never creates a second Lead for the same email
+ * and never changes the Lead Source of an existing Lead (paid or otherwise); the new
+ * submission is attached as a Note instead.
  */
 export async function pushFreePageLeadToZoho(input: PushFreePageLeadInput): Promise<PushFreePageLeadResult> {
   if (input.knownLeadId) return { leadId: input.knownLeadId, created: false };
 
   const picklist = await getLeadSourcePicklist();
-  const sourceValue = picklist.get(LEAD_SOURCE_FREE_PAGE);
+  const sourceValue = picklist.get(LEAD_SOURCE_FREE);
   if (!sourceValue) {
     console.error("[ZOHO_SYNC] Lead Source picklist is missing a required value.", {
-      value: LEAD_SOURCE_FREE_PAGE,
+      value: LEAD_SOURCE_FREE,
     });
     throw new ZohoError("LEAD_SOURCE_NOT_IN_PICKLIST", true);
   }
+  const note = submissionNote(input, undefined, FREE_PAGE_NOTE_TITLE);
 
   // Prefer the Lead we created for this applicant earlier: Zoho search can lag behind a
   // brand-new Lead. The Note carries the new details, so a failure must not be swallowed.
@@ -640,10 +643,12 @@ export async function pushFreePageLeadToZoho(input: PushFreePageLeadInput): Prom
     (input.linkedLeadId ? await getLeadById(input.linkedLeadId) : null) ??
     (await findLeadsByEmail(input.customer.email))[0];
   if (existing) {
-    await addLeadNote(existing.id, "Growth Audit free page submission", submissionNote(input));
+    await addLeadNote(existing.id, FREE_PAGE_NOTE_TITLE, note);
     return { leadId: existing.id, created: false };
   }
 
   const leadId = await upsertLead(mapCustomerToZohoLead(input.customer, sourceValue));
+  // The Lead already holds the form details; the Note only marks where it came from.
+  await addNoteSafely(leadId, FREE_PAGE_NOTE_TITLE, note);
   return { leadId, created: true };
 }

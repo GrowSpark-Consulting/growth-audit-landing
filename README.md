@@ -244,7 +244,7 @@ A second variant of the same page with no price, countdown or checkout. It lives
 ### Submission flow
 1. Validate (same rules as the paid form) and rate-limit (best effort, per server instance).
 2. Save a `free_submissions` record. See "Deduplication" below.
-3. Create or find the Zoho Lead (Lead Source `Growth Audit Free Page`) under a lease so concurrent requests cannot create two. **The browser shows the success message only when the server answers `{ ok: true }`, and the server does that only after Zoho confirmed the Lead.** Any CRM error produces an error message, no success state and no email.
+3. Create or find the Zoho Lead (Lead Source `Growth Audit Free`, plus a `Submitted via the free landing page` Note) under a lease so concurrent requests cannot create two. **The browser shows the success message only when the server answers `{ ok: true }`, and the server does that only after Zoho confirmed the Lead.** Any CRM error produces an error message, no success state and no email.
 4. Send the applicant confirmation and the team notification (existing Resend integration and the three team addresses in `src/lib/email.ts`; no payment wording).
 
 ### Deduplication
@@ -253,20 +253,24 @@ A second variant of the same page with no price, countdown or checkout. It lives
 - An identical submission after 24 hours is treated as a new request in the same way.
 
 ### Lead Source rules
-- `Growth Audit Free Page` is set only when a free-page submission creates a new Lead. An existing Lead keeps its source (paid or otherwise).
-- On the paid page, an unpaid or failed checkout never overwrites `Growth Audit Free Page`; only a server-verified payment upgrades it to `Growth Audit Paid`.
+- The Zoho CRM Free edition cannot add picklist values, so free-page Leads use the existing `Growth Audit Free` value. Every free-page submission adds a Note titled `Submitted via the free landing page`; that Note is how the team tells free-page Leads apart from unpaid paid-page checkouts.
+- `Growth Audit Free` is set only when a free-page submission creates a new Lead. An existing Lead keeps its source (paid or otherwise) and gets the Note.
+- On the paid page, an unpaid or failed checkout leaves the source as `Growth Audit Free`; only a server-verified payment upgrades it to `Growth Audit Paid`.
+- Paid orders and free submissions look up each other's stored Lead IDs, so an applicant who uses both forms within Zoho's ~1 minute search delay is matched to the same Lead instead of the Email upsert overwriting its Lead Source.
 
 ### Failure and recovery behaviour
 | Situation | Result |
 |---|---|
 | Zoho credentials missing or Zoho down | Error shown, nothing recorded as saved, no email. Resubmitting reuses the same record and creates the Lead once. |
-| `Growth Audit Free Page` missing from the picklist | Same as above (`LEAD_SOURCE_NOT_IN_PICKLIST` in the logs). |
+| `MONGODB_URI` or a `ZOHO_*` setting missing or malformed | HTTP 503 "temporarily unavailable"; nothing is saved. The log line `[FREE_SUBMIT] Form unavailable` names the missing or invalid setting (never its value). |
+| `Growth Audit Free` missing from the picklist | Same as Zoho down (`LEAD_SOURCE_NOT_IN_PICKLIST` in the logs). |
+| The free-page Note fails after the Lead was created | The submission still succeeds; the log shows `Lead note could not be attached`. |
 | MongoDB down before anything is saved | Error shown; Zoho is never called. |
 | Zoho created the Lead, then MongoDB failed to record its ID | Recording is retried 3 times. If it still fails, the applicant is shown success (the Lead exists in the CRM) and the log shows `CRM_CONFIRMED_BUT_NOT_RECORDED` with the submission and Lead IDs. No emails are sent for that submission until it is recorded. A later submission from the applicant reuses the same Lead (Zoho's email duplicate check) and sends the emails. **Operations should alert on that log line**, because the team email will not be sent automatically. |
 | Email provider fails | The submission stays successful. Each email is claimed with a lease and marked sent only when Resend accepts it; `/api/cron/retry-free-emails` (daily) re-sends what is unsent. Resend idempotency keys (`free-audit/<kind>/<submissionId>`) prevent duplicates if a send succeeded but its bookkeeping failed. |
 
 ### Configuration still required (nothing below has been done by the code)
-1. **Zoho CRM picklist.** Setup -> Customization -> Modules and Fields -> Leads -> Fields (or the layout) -> Lead Source -> add the value exactly `Growth Audit Free Page` (same capitalisation, no trailing space) and save/publish the layout. Keep the existing `Growth Audit Free` and `Growth Audit Paid` values. The picklist is cached for a few minutes, so allow a short delay. Until this is done, every free submission shows an error and creates nothing.
+1. **Zoho CRM picklist.** No change needed: the free page uses the existing `Growth Audit Free` value (and the paid flow `Growth Audit Paid`). `npm run zoho:verify` confirms both are present.
 2. **Vercel domain.** In the Vercel project that serves the paid site: Settings -> Domains -> Add `growthaudit-free.growsparkconsulting.com` (assign to Production; do not redirect it to the paid domain).
 3. **DNS** at the `growsparkconsulting.com` DNS provider: add the record Vercel displays for the new domain, typically `CNAME  growthaudit-free  ->  cname.vercel-dns.com` (use the exact value Vercel shows). Wait for verification and automatic HTTPS.
 4. **Production environment variables.** The free page needs no new variables. Confirm these already exist in Production for the same project: `MONGODB_URI`, `MONGODB_DB_NAME`, `ZOHO_CLIENT_ID`, `ZOHO_CLIENT_SECRET`, `ZOHO_REFRESH_TOKEN`, `ZOHO_ACCOUNTS_URL` (and `ZOHO_API_VERSION` if used), `RESEND_API_KEY` (used by the paid emails but missing from `.env.example`), and `CRON_SECRET` (at least 16 characters, required by the cron routes). Optional: `NEXT_PUBLIC_FREE_SITE_URL` (defaults to `https://growthaudit-free.growsparkconsulting.com`).

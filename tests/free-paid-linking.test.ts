@@ -6,8 +6,8 @@ import { POST } from "../src/app/api/free-submit/route";
 import { createMongoFreeStore } from "../src/lib/free-submissions";
 import {
   describeZohoConfigProblem,
+  FREE_PAGE_NOTE_TITLE,
   LEAD_SOURCE_FREE,
-  LEAD_SOURCE_FREE_PAGE,
   LEAD_SOURCE_PAID,
   pushFreePageLeadToZoho,
   pushLeadToZoho,
@@ -155,7 +155,6 @@ test("a failing lookup in the other workflow's collection never blocks a submiss
 
 async function withFakeZoho(run: (fake: FakeZoho) => Promise<void>) {
   const fake = new FakeZoho();
-  fake.picklist.push(LEAD_SOURCE_FREE_PAGE);
   const restore = installFakeZoho(fake);
   try {
     await run(fake);
@@ -184,12 +183,12 @@ test("a free submission right after a payment keeps Growth Audit Paid and only a
     assert.equal(fake.leads[0].Lead_Source, "Growth Audit Paid");
     assert.equal(fake.leads[0].Company, "Verma Textiles", "existing details untouched");
     assert.equal(fake.count("POST", /\/Leads\/upsert$/), 1, "only the paid Lead was ever upserted");
-    const note = fake.notes.find((n) => n.title === "Growth Audit free page submission");
+    const note = fake.notes.find((n) => n.title === FREE_PAGE_NOTE_TITLE);
     assert.match(note?.content ?? "", /Company: Verma Textiles Pvt Ltd/);
   });
 });
 
-test("an unpaid checkout right after a free submission keeps Growth Audit Free Page until payment", async () => {
+test("an unpaid checkout right after a free submission reuses the free-page Lead until payment", async () => {
   await withFakeZoho(async (fake) => {
     const free = await pushFreePageLeadToZoho({ customer: makeCustomer(), submissionRef: "FREE_11" });
     const unpaid = await pushLeadToZoho({
@@ -200,7 +199,8 @@ test("an unpaid checkout right after a free submission keeps Growth Audit Free P
     });
     assert.equal(unpaid.leadId, free.leadId);
     assert.equal(fake.leads.length, 1);
-    assert.equal(fake.leads[0].Lead_Source, "Growth Audit Free Page");
+    assert.equal(fake.leads[0].Lead_Source, "Growth Audit Free");
+    assert.equal(fake.notes.filter((n) => n.title === FREE_PAGE_NOTE_TITLE).length, 1, "free-page marker kept");
 
     await pushLeadToZoho({
       customer: makeCustomer(),

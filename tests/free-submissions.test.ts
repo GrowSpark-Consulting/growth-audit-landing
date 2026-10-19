@@ -14,7 +14,13 @@ import {
   type FreeSubmissionStore,
 } from "../src/lib/free-submissions";
 import { sendFreeApplicantConfirmationEmail, sendFreeTeamNotificationEmail } from "../src/lib/email";
-import { isZohoConfigured, LEAD_SOURCE_FREE_PAGE, LEAD_SOURCE_PAID, pushFreePageLeadToZoho } from "../src/lib/zoho";
+import {
+  FREE_PAGE_NOTE_TITLE,
+  isZohoConfigured,
+  LEAD_SOURCE_FREE,
+  LEAD_SOURCE_PAID,
+  pushFreePageLeadToZoho,
+} from "../src/lib/zoho";
 import type { CustomerData } from "../src/lib/orders";
 import { FakeZoho, installFakeZoho, makeCustomer } from "./helpers/fake-zoho";
 
@@ -143,7 +149,6 @@ function deps(overrides: Partial<FreeSubmissionDependencies> = {}): FreeSubmissi
 
 beforeEach(() => {
   fake = new FakeZoho();
-  fake.picklist.push(LEAD_SOURCE_FREE_PAGE);
   restore = installFakeZoho(fake);
   store = new MemoryStore();
   applicantEmails = [];
@@ -155,16 +160,31 @@ beforeEach(() => {
 
 afterEach(() => restore());
 
-test("a free submission creates one Zoho Lead tagged 'Growth Audit Free Page' with the form data", async () => {
+test("a free submission creates one 'Growth Audit Free' Lead marked as coming from the free page", async () => {
   const result = await processFreeSubmission(makeCustomer(), deps());
   assert.equal(result.ok, true);
   assert.equal(fake.leads.length, 1);
   const lead = fake.leads[0];
-  assert.equal(lead.Lead_Source, "Growth Audit Free Page");
+  assert.equal(lead.Lead_Source, "Growth Audit Free");
   assert.equal(lead.Email, "asha@vermatextiles.example");
   assert.equal(lead.Company, "Verma Textiles");
   assert.equal(lead.Mobile, "+919876543210");
   assert.match(String(lead.Description), /Team Size: 16-30/);
+
+  assert.equal(fake.notes.length, 1);
+  assert.equal(fake.notes[0].leadId, lead.id);
+  assert.equal(fake.notes[0].title, "Submitted via the free landing page");
+  assert.match(fake.notes[0].content, /^Submitted via the free landing page \(reference FREE_TEST_1\)\./);
+});
+
+test("a failed free-page marker note does not fail a submission whose Lead was created", async () => {
+  fake.fail("POST", /\/Notes$/, { kind: "response", status: 500, body: { code: "INTERNAL_ERROR" } });
+  const result = await processFreeSubmission(makeCustomer(), deps());
+  assert.equal(result.ok, true);
+  assert.equal(fake.leads.length, 1);
+  assert.equal(fake.notes.length, 0);
+  assert.equal(applicantEmails.length, 1);
+  assert.equal(teamEmails.length, 1);
 });
 
 test("emails go out only after Zoho confirms the Lead, once each", async () => {
@@ -200,8 +220,8 @@ test("a Zoho failure returns an error, sends no emails, and a retry creates exac
   assert.equal(teamEmails.length, 1);
 });
 
-test("a missing 'Growth Audit Free Page' picklist value fails safely without creating a Lead", async () => {
-  fake.picklist = fake.picklist.filter((value) => value !== LEAD_SOURCE_FREE_PAGE);
+test("a missing 'Growth Audit Free' picklist value fails safely without creating a Lead", async () => {
+  fake.picklist = fake.picklist.filter((value) => value !== LEAD_SOURCE_FREE);
   const result = await processFreeSubmission(makeCustomer(), deps());
   assert.equal(result.ok, false);
   assert.equal(fake.leads.length, 0);
@@ -327,7 +347,7 @@ test("an identical retry reuses the record; no second Lead, note or email", asyn
   assert.ok(retry.ok);
   assert.equal(store.docs.size, 1);
   assert.equal(fake.leads.length, 1);
-  assert.equal(fake.notes.length, 0);
+  assert.equal(fake.notes.length, 1, "only the first submission's free-page note");
   assert.equal(applicantEmails.length, 1);
   assert.equal(teamEmails.length, 1);
 });
@@ -349,11 +369,12 @@ test("a genuine update within 24h is kept, linked to the same Lead, and the team
   assert.equal(records[0].zoho?.leadId, leadId);
   assert.equal(records[1].zoho?.leadId, leadId);
   assert.equal(fake.leads.length, 1);
-  assert.equal(fake.leads[0].Lead_Source, "Growth Audit Free Page");
+  assert.equal(fake.leads[0].Lead_Source, "Growth Audit Free");
 
   // The new details are preserved in the CRM as a Note on that Lead.
-  const note = fake.notes.find((n) => n.leadId === leadId);
+  const note = fake.notes.filter((n) => n.leadId === leadId).at(-1);
   assert.ok(note, "update is attached to the existing Lead");
+  assert.equal(note.title, FREE_PAGE_NOTE_TITLE);
   assert.match(note.content, /Verma Textiles Pvt Ltd/);
   assert.match(note.content, /₹2-3 crore/);
 
