@@ -80,6 +80,20 @@ export function getZohoConfig(): ZohoConfig {
   };
 }
 
+/** Why Zoho is unusable, by setting name or error code only (never values); null when ready. */
+export function describeZohoConfigProblem(): string | null {
+  const missing = ["ZOHO_CLIENT_ID", "ZOHO_CLIENT_SECRET", "ZOHO_REFRESH_TOKEN", "ZOHO_ACCOUNTS_URL"].filter(
+    (name) => !process.env[name]?.trim()
+  );
+  if (missing.length > 0) return `missing ${missing.join(", ")}`;
+  try {
+    getZohoConfig();
+    return null;
+  } catch (error) {
+    return error instanceof ZohoError ? error.code : "ZOHO_CONFIG_INVALID";
+  }
+}
+
 export function isZohoConfigured(): boolean {
   try {
     getZohoConfig();

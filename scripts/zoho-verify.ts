@@ -4,6 +4,7 @@ import {
   getZohoAccessToken,
   getZohoConfig,
   LEAD_SOURCE_FREE,
+  LEAD_SOURCE_FREE_PAGE,
   LEAD_SOURCE_PAID,
   ZohoError,
 } from "../src/lib/zoho";
@@ -56,7 +57,7 @@ async function main(): Promise<boolean> {
 
   const picklist = fields.find((field) => field.apiName === "Lead_Source")?.picklist ?? [];
   console.log(`\nLead_Source picklist: ${picklist.map((option) => option.display).join(", ") || "(none)"}`);
-  for (const required of [LEAD_SOURCE_FREE, LEAD_SOURCE_PAID]) {
+  for (const required of [LEAD_SOURCE_FREE, LEAD_SOURCE_PAID, LEAD_SOURCE_FREE_PAGE]) {
     const found = picklist.some((option) => option.display === required || option.actual === required);
     if (!found) ok = false;
     console.log(`${found ? "OK     " : "MISSING"}  Lead_Source value "${required}"`);
