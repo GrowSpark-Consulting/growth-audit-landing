@@ -4,6 +4,7 @@ import { isMongoConfigured } from "@/lib/db";
 import { createDefaultFreeDependencies, processFreeSubmission } from "@/lib/free-submissions";
 import { validateCustomerInput } from "@/lib/orders";
 import { createRateLimiter } from "@/lib/rate-limit";
+import { describeZohoConfigProblem } from "@/lib/zoho";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -33,7 +34,12 @@ export async function POST(request: NextRequest) {
     if (!validation.valid || !validation.data) {
       return NextResponse.json({ ok: false, errors: validation.errors }, { status: 400 });
     }
-    if (!isMongoConfigured()) {
+    const configProblem = isMongoConfigured() ? describeZohoConfigProblem() : "missing MONGODB_URI";
+    if (configProblem) {
+      // Names the missing or invalid setting (never its value) so a 503 is diagnosable from the logs.
+      console.error("[FREE_SUBMIT] Form unavailable: server configuration is incomplete.", {
+        problem: configProblem,
+      });
       return NextResponse.json({ ok: false, error: ERROR_MESSAGES.not_configured }, { status: 503 });
     }
 

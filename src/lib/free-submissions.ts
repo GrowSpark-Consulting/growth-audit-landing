@@ -1,9 +1,9 @@
 import { createHash, randomBytes } from "crypto";
 import type { Collection } from "mongodb";
 import { getSafeCheckoutErrorClass } from "./checkout-diagnostics";
-import { getDb } from "./db";
+import { getDb, isMongoConfigured } from "./db";
 import { sendFreeApplicantConfirmationEmail, sendFreeTeamNotificationEmail } from "./email";
-import type { CustomerData } from "./orders";
+import { findZohoLeadIdForEmail, type CustomerData } from "./orders";
 import {
   isZohoConfigured,
   pushFreePageLeadToZoho,
@@ -242,6 +242,37 @@ async function getCollection(): Promise<Collection<FreeSubmissionDocument>> {
   return col;
 }
 
+/**
+ * Zoho Lead ID of the latest free submission with this email. Best effort: it lets the
+ * paid workflow reuse a Lead that Zoho search cannot see yet, and a failure returns null.
+ */
+export async function findFreeSubmissionLeadIdForEmail(
+  email: string,
+  excludeSubmissionId = ""
+): Promise<string | null> {
+  if (!isMongoConfigured()) return null;
+  try {
+    const linked = await (await getDb())
+      .collection<FreeSubmissionDocument>(FREE_COLLECTION)
+      .findOne(
+        { "customer.email": email, submissionId: { $ne: excludeSubmissionId }, "zoho.leadId": { $exists: true } },
+        { sort: { createdAt: -1 } }
+      );
+    return linked?.zoho?.leadId ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Lead ID recorded for this email by a paid-page order. Best effort; a failure returns null. */
+async function findPaidOrderLeadIdForEmail(email: string): Promise<string | null> {
+  try {
+    return await findZohoLeadIdForEmail(email, "");
+  } catch {
+    return null;
+  }
+}
+
 export function createMongoFreeStore(): FreeSubmissionStore {
   return {
     async upsert(customer, now) {
@@ -282,7 +313,9 @@ export function createMongoFreeStore(): FreeSubmissionStore {
         },
         { sort: { createdAt: -1 } }
       );
-      return linked?.zoho?.leadId ?? null;
+      // Fall back to a paid-page order's Lead: Zoho search lags new Leads by about a minute,
+      // and without the ID the Email upsert would overwrite that Lead's Lead Source.
+      return linked?.zoho?.leadId ?? (await findPaidOrderLeadIdForEmail(email));
     },
     async get(submissionId) {
       return (await getCollection()).findOne({ submissionId });

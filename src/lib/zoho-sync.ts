@@ -1,4 +1,5 @@
 import { getSafeCheckoutErrorClass } from "./checkout-diagnostics";
+import { findFreeSubmissionLeadIdForEmail } from "./free-submissions";
 import {
   claimOrderForZohoSync,
   findOrdersDueForZohoSync,
@@ -39,7 +40,9 @@ export const defaultZohoSyncDependencies: ZohoSyncDependencies = {
   releaseClaim: releaseZohoSyncClaim,
   saveResult: (txnid, update) => saveZohoSyncResult(txnid, update),
   findDue: findOrdersDueForZohoSync,
-  findLinkedLead: findZohoLeadIdForEmail,
+  // A free-page Lead created moments ago is not in Zoho search yet; reuse it by ID.
+  findLinkedLead: async (email, txnid) =>
+    (await findZohoLeadIdForEmail(email, txnid)) ?? (await findFreeSubmissionLeadIdForEmail(email)),
   pushLead: pushLeadToZoho,
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   now: () => new Date(),
