@@ -61,6 +61,11 @@ export interface PayUDetails {
   additionalCharges?: string;
   rawResponseHash?: string;
   verifiedAt?: Date;
+  /** Per-recipient delivery state: a leased claim, then confirmed once Resend accepts it. */
+  customerEmailClaimedAt?: Date;
+  customerEmailSent?: boolean;
+  teamEmailClaimedAt?: Date;
+  teamEmailSent?: boolean;
 }
 
 export interface OrderDocument {
@@ -288,4 +293,107 @@ export async function updateOrderStatus(
     order: persistedOrder,
     alreadyPaid: !updateResult && persistedOrder?.status === "PAID",
   };
+}
+
+export type PaymentEmailKind = "customer" | "team";
+
+/** A claim blocks other attempts for this long; after that it may be reclaimed. */
+export const EMAIL_CLAIM_LEASE_MS = 2 * 60 * 1000;
+
+const EMAIL_FIELDS = {
+  customer: { sent: "payu.customerEmailSent", claimedAt: "payu.customerEmailClaimedAt" },
+  team: { sent: "payu.teamEmailSent", claimedAt: "payu.teamEmailClaimedAt" },
+} as const;
+
+/**
+ * Atomically claims one payment email for a PAID order and returns the claim
+ * timestamp, or null. Succeeds only if the email is not confirmed sent and has no
+ * claim, or its claim is older than the lease. One conditional findOneAndUpdate,
+ * so concurrent callers cannot both claim an active email.
+ */
+export async function claimPaymentEmail(
+  txnid: string,
+  kind: PaymentEmailKind,
+  now: Date = new Date()
+): Promise<Date | null> {
+  if (!isMongoConfigured()) return null;
+  const col = await getOrdersCollection();
+  const { sent, claimedAt } = EMAIL_FIELDS[kind];
+  const cutoff = new Date(now.getTime() - EMAIL_CLAIM_LEASE_MS);
+  const claimed = await col.findOneAndUpdate(
+    {
+      txnid,
+      status: "PAID",
+      [sent]: { $ne: true },
+      // `null` also matches a missing field.
+      $or: [{ [claimedAt]: null }, { [claimedAt]: { $lt: cutoff } }],
+    },
+    { $set: { [claimedAt]: now } }
+  );
+  return claimed ? now : null;
+}
+
+/** Records that Resend accepted the email, so it is never claimed again. */
+export async function markPaymentEmailSent(
+  txnid: string,
+  kind: PaymentEmailKind
+): Promise<void> {
+  if (!isMongoConfigured()) return;
+  const col = await getOrdersCollection();
+  await col.updateOne({ txnid, status: "PAID" }, { $set: { [EMAIL_FIELDS[kind].sent]: true } });
+}
+
+/**
+ * Clears this caller's claim after a failed send so a later callback can retry
+ * immediately. Matches on the claim timestamp, so it never clears a claim that
+ * another attempt has since taken over.
+ */
+export async function releasePaymentEmailClaim(
+  txnid: string,
+  kind: PaymentEmailKind,
+  claimedAt: Date
+): Promise<void> {
+  if (!isMongoConfigured()) return;
+  const col = await getOrdersCollection();
+  const fields = EMAIL_FIELDS[kind];
+  await col.updateOne(
+    { txnid, status: "PAID", [fields.sent]: { $ne: true }, [fields.claimedAt]: claimedAt },
+    { $unset: { [fields.claimedAt]: "" } }
+  );
+}
+
+/**
+ * PAID orders whose customer or team email is not confirmed sent, for the recovery
+ * cron. Paid between `maxAgeMs` and `minAgeMs` ago (by verification time), newest
+ * first so old, persistently failing orders cannot starve recent ones.
+ */
+export async function findPaidOrdersWithUnsentEmails(options: {
+  now: Date;
+  minAgeMs: number;
+  maxAgeMs: number;
+  /** Orders verified before this are never picked up (the feature's go-live time). */
+  notBefore: Date;
+  limit: number;
+}): Promise<OrderDocument[]> {
+  if (!isMongoConfigured()) return [];
+  const col = await getOrdersCollection();
+  const windowStart = Math.max(
+    options.now.getTime() - options.maxAgeMs,
+    options.notBefore.getTime()
+  );
+  return col
+    .find({
+      status: "PAID",
+      "payu.verifiedAt": {
+        $gte: new Date(windowStart),
+        $lte: new Date(options.now.getTime() - options.minAgeMs),
+      },
+      $or: [
+        { "payu.customerEmailSent": { $ne: true } },
+        { "payu.teamEmailSent": { $ne: true } },
+      ],
+    })
+    .sort({ "payu.verifiedAt": -1 })
+    .limit(options.limit)
+    .toArray();
 }

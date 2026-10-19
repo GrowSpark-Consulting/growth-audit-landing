@@ -1,8 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
+  claimPaymentEmail,
   findOrderByTxnid,
+  markPaymentEmailSent,
+  releasePaymentEmailClaim,
   updateOrderStatus,
 } from "@/lib/orders";
+import {
+  sendCustomerPaymentConfirmationEmail,
+  sendTeamPaymentNotificationEmail,
+} from "@/lib/email";
 import {
   getPayUCallbackBaseUrl,
   getPayUConfig,
@@ -34,6 +41,13 @@ export async function POST(request: NextRequest) {
       updateOrderStatus,
       verifyHash: verifyPayUResponseHash,
       createToken: generateOrderVerificationToken,
+      paymentEmails: {
+        claim: claimPaymentEmail,
+        markSent: markPaymentEmailSent,
+        release: releasePaymentEmailClaim,
+        sendCustomer: sendCustomerPaymentConfirmationEmail,
+        sendTeam: sendTeamPaymentNotificationEmail,
+      },
     });
 
     const redirectUrl = new URL("/thank-you", redirectBaseUrl);

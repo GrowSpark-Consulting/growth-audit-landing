@@ -3,6 +3,7 @@ import {
   FIXED_ORDER_CURRENCY,
   FIXED_PRODUCT_NAME,
   type OrderDocument,
+  type PaymentEmailKind,
   type PayUDetails,
 } from "./orders";
 import type { PayUConfig, PayUResponseData } from "./payu";
@@ -31,6 +32,67 @@ export interface PayUCallbackDependencies {
   ) => Promise<{ success: boolean; order: OrderDocument | null }>;
   verifyHash: (data: PayUResponseData, salt: string) => boolean;
   createToken: (txnid: string, status: string, amount: number) => string;
+  /** Optional post-payment emails; only invoked for a persisted, verified PAID order. */
+  paymentEmails?: {
+    /** Returns the claim timestamp, or null if sent or actively claimed. */
+    claim: (txnid: string, kind: PaymentEmailKind) => Promise<Date | null>;
+    markSent: (txnid: string, kind: PaymentEmailKind) => Promise<void>;
+    release: (txnid: string, kind: PaymentEmailKind, claimedAt: Date) => Promise<void>;
+    sendCustomer: (order: OrderDocument) => Promise<boolean>;
+    sendTeam: (order: OrderDocument) => Promise<boolean>;
+  };
+}
+
+export type PaymentEmails = NonNullable<PayUCallbackDependencies["paymentEmails"]>;
+
+/** skipped: already sent or actively claimed elsewhere. failed: will be retried later. */
+export type PaymentEmailOutcome = "sent" | "skipped" | "failed";
+
+/**
+ * Sends one email under a leased claim. Confirmed on success; released on failure
+ * so it can be retried. If the process dies mid-way, the lease expires and a later
+ * callback retries (Resend's idempotency key dedupes a send it already accepted).
+ */
+async function sendOnce(
+  order: OrderDocument,
+  kind: PaymentEmailKind,
+  alreadySent: boolean | undefined,
+  emails: PaymentEmails
+): Promise<PaymentEmailOutcome> {
+  if (alreadySent === true) return "skipped";
+  try {
+    const claimedAt = await emails.claim(order.txnid, kind);
+    if (!claimedAt) return "skipped";
+    let sent = false;
+    try {
+      sent = await (kind === "customer" ? emails.sendCustomer(order) : emails.sendTeam(order));
+    } catch {
+      sent = false;
+    }
+    if (sent) {
+      await emails.markSent(order.txnid, kind);
+      return "sent";
+    }
+    await emails.release(order.txnid, kind, claimedAt);
+    return "failed";
+  } catch (err) {
+    console.error(
+      `[EMAIL] ${kind} email step failed for ${order.txnid}: ${err instanceof Error ? err.message : "unknown error"}`
+    );
+    return "failed";
+  }
+}
+
+/** Customer and team emails are tracked independently. Never throws. */
+export async function sendPaymentEmails(
+  order: OrderDocument,
+  emails: PaymentEmails
+): Promise<{ customer: PaymentEmailOutcome; team: PaymentEmailOutcome }> {
+  const [customer, team] = await Promise.all([
+    sendOnce(order, "customer", order.payu?.customerEmailSent, emails),
+    sendOnce(order, "team", order.payu?.teamEmailSent, emails),
+  ]);
+  return { customer, team };
 }
 
 function amountMatches(received: string, expected: number): boolean {
@@ -144,6 +206,10 @@ export async function processPayUCallback(
     if (!persistedStatus) return { ok: false, error: "processing_error", txnid };
     const token = dependencies.createToken(txnid, persistedStatus, persisted.amount);
     if (!token) return { ok: false, error: "processing_error", txnid };
+
+    if (persistedStatus === "PAID" && dependencies.paymentEmails) {
+      await sendPaymentEmails(persisted, dependencies.paymentEmails);
+    }
 
     return {
       ok: true,
