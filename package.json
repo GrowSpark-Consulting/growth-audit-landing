@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test tests/**/*.test.ts"
+    "test": "tsx --test tests/**/*.test.ts",
+    "zoho:verify": "tsx scripts/zoho-verify.ts"
   },
   "dependencies": {
     "mongodb": "^7.7.0",

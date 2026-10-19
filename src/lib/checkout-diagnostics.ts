@@ -4,6 +4,7 @@ const SAFE_ERROR_CLASSES = new Set([
   "SyntaxError",
   "RangeError",
   "PayUConfigurationError",
+  "ZohoError",
   "MongoServerSelectionError",
   "MongoNetworkError",
   "MongoServerError",

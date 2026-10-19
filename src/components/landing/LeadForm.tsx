@@ -176,8 +176,13 @@ export function LeadForm() {
           <input
             id="website"
             name="website"
-            type="url"
-            placeholder="https://"
+            type="text"
+            inputMode="url"
+            autoComplete="url"
+            maxLength={255}
+            pattern={String.raw`\s*(https?:\/\/)?([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}(:\d+)?([\/?#]\S*)?\s*`}
+            title="Enter a website like www.yourcompany.com"
+            placeholder="www.yourcompany.com"
             disabled={submitting}
           />
         </div>

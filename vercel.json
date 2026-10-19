@@ -4,6 +4,10 @@
     {
       "path": "/api/cron/retry-payment-emails",
       "schedule": "0 4 * * *"
+    },
+    {
+      "path": "/api/internal/zoho-sync-retry",
+      "schedule": "30 3 * * *"
     }
   ]
 }
