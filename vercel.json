@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/internal/zoho-sync-retry",
+      "schedule": "30 3 * * *"
+    }
+  ]
+}

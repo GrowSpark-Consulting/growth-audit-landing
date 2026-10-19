@@ -1,6 +1,7 @@
-import { Collection, ObjectId } from "mongodb";
+import { Collection, ObjectId, type Filter, type UpdateFilter } from "mongodb";
 import { randomBytes } from "crypto";
 import { getDb, isMongoConfigured } from "./db";
+import { LEAD_SOURCE_PAID, type ZohoLeadSource } from "./zoho";
 
 export const FIXED_ORDER_AMOUNT = 999.0;
 export const FIXED_ORDER_CURRENCY = "INR";
@@ -63,6 +64,20 @@ export interface PayUDetails {
   verifiedAt?: Date;
 }
 
+export type ZohoSyncStatus = "PENDING" | "SYNCED" | "RETRY_REQUIRED" | "FAILED";
+
+export interface ZohoSyncState {
+  status: ZohoSyncStatus;
+  attempts: number;
+  leadId?: string;
+  leadSource?: ZohoLeadSource;
+  lastError?: string;
+  lastAttemptAt?: Date;
+  syncedAt?: Date;
+  nextRetryAt?: Date;
+  lockedUntil?: Date;
+}
+
 export interface OrderDocument {
   _id?: ObjectId;
   txnid: string;
@@ -72,6 +87,7 @@ export interface OrderDocument {
   customer: CustomerData;
   status: OrderStatus;
   payu?: PayUDetails;
+  zoho?: ZohoSyncState;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -95,6 +111,8 @@ export async function ensureOrderIndexes(): Promise<void> {
   await col.createIndex({ txnid: 1 }, { unique: true, name: "uniq_txnid" });
   await col.createIndex({ createdAt: -1 }, { name: "idx_created_at" });
   await col.createIndex({ status: 1 }, { name: "idx_status" });
+  await col.createIndex({ "zoho.status": 1, createdAt: 1 }, { name: "idx_zoho_status_created" });
+  await col.createIndex({ "customer.email": 1, createdAt: -1 }, { name: "idx_customer_email" });
   indexesEnsured = true;
 }
 
@@ -147,9 +165,13 @@ export function validateCustomerInput(input: Partial<CustomerData>): {
     if (!website.startsWith("http://") && !website.startsWith("https://")) {
       website = `https://${website}`;
     }
+    let hostname = "";
     try {
-      new URL(website);
+      hostname = new URL(website).hostname;
     } catch {
+      hostname = "";
+    }
+    if (!/^([a-z0-9-]+\.)+[a-z]{2,}$/i.test(hostname) || website.length > 255) {
       errors.push("Please provide a valid website URL or leave blank.");
     }
   } else {
@@ -211,6 +233,7 @@ export async function createOrder(customer: CustomerData): Promise<OrderDocument
     productInfo: FIXED_PRODUCT_NAME,
     customer,
     status: "PENDING",
+    zoho: { status: "PENDING", attempts: 0 },
     createdAt: now,
     updatedAt: now,
   };
@@ -288,4 +311,112 @@ export async function updateOrderStatus(
     order: persistedOrder,
     alreadyPaid: !updateResult && persistedOrder?.status === "PAID",
   };
+}
+
+const ZOHO_SYNC_LEASE_MS = 90_000;
+const ZOHO_STALE_PENDING_MS = 2 * 60_000;
+
+export interface ZohoSyncUpdate {
+  status: ZohoSyncStatus;
+  countAttempt: boolean;
+  leadId?: string;
+  leadSource?: ZohoLeadSource;
+  error?: string;
+  nextRetryAt?: Date;
+  /** Skip the write if payment was confirmed while the sync was running. */
+  onlyIfNotPaid?: boolean;
+}
+
+/**
+ * Atomically leases an order for CRM sync so concurrent callers (checkout,
+ * PayU callbacks, the retry job) never push the same submission in parallel.
+ * Returns null when the order is missing or another caller holds the lease.
+ */
+export async function claimOrderForZohoSync(
+  txnid: string,
+  now = new Date()
+): Promise<OrderDocument | null> {
+  if (!isMongoConfigured()) return null;
+  const col = await getOrdersCollection();
+  return col.findOneAndUpdate(
+    {
+      txnid,
+      $or: [{ "zoho.lockedUntil": { $exists: false } }, { "zoho.lockedUntil": { $lte: now } }],
+    },
+    { $set: { "zoho.lockedUntil": new Date(now.getTime() + ZOHO_SYNC_LEASE_MS) } },
+    { returnDocument: "after" }
+  );
+}
+
+export async function releaseZohoSyncClaim(txnid: string): Promise<void> {
+  const col = await getOrdersCollection();
+  await col.updateOne({ txnid }, { $unset: { "zoho.lockedUntil": "" } });
+}
+
+/** Persists a sync result and releases the lease. Returns false when no order matched. */
+export async function saveZohoSyncResult(
+  txnid: string,
+  update: ZohoSyncUpdate,
+  now = new Date()
+): Promise<boolean> {
+  const set: Record<string, unknown> = { "zoho.status": update.status, "zoho.lastAttemptAt": now };
+  const unset: Record<string, ""> = { "zoho.lockedUntil": "" };
+  if (update.leadId) set["zoho.leadId"] = update.leadId;
+  if (update.leadSource) set["zoho.leadSource"] = update.leadSource;
+  if (update.status === "SYNCED") set["zoho.syncedAt"] = now;
+  if (update.error) set["zoho.lastError"] = update.error;
+  else unset["zoho.lastError"] = "";
+  if (update.nextRetryAt) set["zoho.nextRetryAt"] = update.nextRetryAt;
+  else unset["zoho.nextRetryAt"] = "";
+
+  const filter: Filter<OrderDocument> = update.onlyIfNotPaid
+    ? { txnid, status: { $ne: "PAID" } }
+    : { txnid };
+  const col = await getOrdersCollection();
+  const result = await col.updateOne(filter, {
+    $set: set,
+    $unset: unset,
+    ...(update.countAttempt ? { $inc: { "zoho.attempts": 1 } } : {}),
+  } as UpdateFilter<OrderDocument>);
+  return result.matchedCount > 0;
+}
+
+/** Zoho Lead ID of the most recent other submission with this email, if one was synced. */
+export async function findZohoLeadIdForEmail(email: string, excludeTxnid: string): Promise<string | null> {
+  if (!isMongoConfigured()) return null;
+  const col = await getOrdersCollection();
+  const match = await col.findOne(
+    { "customer.email": email, txnid: { $ne: excludeTxnid }, "zoho.leadId": { $exists: true } },
+    { sort: { createdAt: -1 }, projection: { "zoho.leadId": 1 } }
+  );
+  return match?.zoho?.leadId ?? null;
+}
+
+/**
+ * Lists submissions whose CRM sync should be (re)attempted: stale PENDING syncs,
+ * due retries, and paid orders whose Lead has not been upgraded yet. FAILED
+ * syncs are excluded until they are requeued manually.
+ */
+export async function findOrdersDueForZohoSync(limit: number, now = new Date()): Promise<string[]> {
+  if (!isMongoConfigured()) return [];
+  const col = await getOrdersCollection();
+  const due = await col
+    .find(
+      {
+        $or: [
+          {
+            "zoho.status": "PENDING",
+            createdAt: { $lte: new Date(now.getTime() - ZOHO_STALE_PENDING_MS) },
+          },
+          {
+            "zoho.status": "RETRY_REQUIRED",
+            $or: [{ "zoho.nextRetryAt": { $exists: false } }, { "zoho.nextRetryAt": { $lte: now } }],
+          },
+          { status: "PAID", "zoho.status": "SYNCED", "zoho.leadSource": { $ne: LEAD_SOURCE_PAID } },
+        ],
+      },
+      { projection: { txnid: 1 }, sort: { createdAt: 1 }, limit }
+    )
+    .toArray();
+  return due.map((order) => order.txnid);
 }
