@@ -1,6 +1,7 @@
 import { Collection, ObjectId, type Filter, type UpdateFilter } from "mongodb";
 import { randomBytes } from "crypto";
 import { getDb, isMongoConfigured } from "./db";
+import type { MetaTrackingContext } from "./meta-capi";
 import { LEAD_SOURCE_PAID, type ZohoLeadSource } from "./zoho";
 
 export const FIXED_ORDER_AMOUNT = 999.0;
@@ -93,11 +94,14 @@ export interface OrderDocument {
   status: OrderStatus;
   payu?: PayUDetails;
   zoho?: ZohoSyncState;
+  /** Stored only when the visitor accepted marketing cookies at checkout. */
+  tracking?: MetaTrackingContext;
+  meta?: { purchaseClaimedAt?: Date; purchaseSentAt?: Date };
   createdAt: Date;
   updatedAt: Date;
 }
 
-const ORDERS_COLLECTION = "orders";
+export const ORDERS_COLLECTION = "orders";
 
 export async function getOrdersCollection(): Promise<Collection<OrderDocument>> {
   const db = await getDb();
@@ -227,7 +231,10 @@ export function validateCustomerInput(input: Partial<CustomerData>): {
 /**
  * Creates and persists a new pending order.
  */
-export async function createOrder(customer: CustomerData): Promise<OrderDocument> {
+export async function createOrder(
+  customer: CustomerData,
+  tracking?: MetaTrackingContext
+): Promise<OrderDocument> {
   const txnid = generateTransactionId();
   const now = new Date();
 
@@ -239,6 +246,9 @@ export async function createOrder(customer: CustomerData): Promise<OrderDocument
     customer,
     status: "PENDING",
     zoho: { status: "PENDING", attempts: 0 },
+    // The PayU callback arrives without the site's cookies, so the consented browser
+    // identifiers needed for the server-side Purchase event are kept from checkout.
+    ...(tracking ? { tracking } : {}),
     createdAt: now,
     updatedAt: now,
   };

@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { MetaTracking } from "@/components/tracking/MetaTracking";
 import { SITE_NAME, SITE_URL } from "@/lib/site";
 import "./thank-you.css";
 
@@ -20,7 +21,11 @@ export const viewport: Viewport = {
 export default function ThankYouLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        {children}
+        {/* Consent banner only; the verified Purchase event is rendered by the page itself. */}
+        <MetaTracking funnel="paid" />
+      </body>
     </html>
   );
 }

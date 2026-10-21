@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { MetaTracking } from "@/components/tracking/MetaTracking";
 import { LANDING_DESCRIPTION, LANDING_TITLE, SITE_NAME, SITE_URL } from "@/lib/site";
 import "./landing.css";
 
@@ -24,7 +25,10 @@ export const viewport: Viewport = {
 export default function LandingLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        {children}
+        <MetaTracking funnel="paid" pageView />
+      </body>
     </html>
   );
 }

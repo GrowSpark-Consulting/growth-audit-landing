@@ -2,6 +2,14 @@
 
 import { useRef, useState, type FormEvent } from "react";
 import { submitFreeRequest } from "@/lib/free-submit-client";
+import {
+  AUDIT_CURRENCY,
+  AUDIT_PRICE,
+  browserPixelEnvironment,
+  META_CONTENT_NAME,
+  META_PIXEL_ID,
+  trackMetaEvent,
+} from "@/lib/meta-pixel";
 
 const TEAM_SIZES = ["1-5", "6-15", "16-30", "31-75", "76+"];
 const INDUSTRIES = [
@@ -67,6 +75,14 @@ export function LeadForm({ variant = "paid" }: { variant?: "paid" | "free" }) {
         "Thank you. Your request has been received, and our team will be in touch shortly with next steps."
       );
       setSubmitted(true);
+      // Only after the server saved it; the eventId pairs this with the server-side Lead.
+      trackMetaEvent(
+        browserPixelEnvironment(),
+        META_PIXEL_ID,
+        "Lead",
+        { content_name: META_CONTENT_NAME, content_category: "free" },
+        outcome.eventId
+      );
     } else {
       setErrorMessage(outcome.message);
       setStatusMessage(null);
@@ -126,6 +142,21 @@ export function LeadForm({ variant = "paid" }: { variant?: "paid" | "free" }) {
         );
         return;
       }
+
+      // The order now exists server-side; the visitor is about to be sent to PayU.
+      trackMetaEvent(
+        browserPixelEnvironment(),
+        META_PIXEL_ID,
+        "InitiateCheckout",
+        {
+          value: AUDIT_PRICE,
+          currency: AUDIT_CURRENCY,
+          content_name: META_CONTENT_NAME,
+          content_category: "paid",
+          num_items: 1,
+        },
+        typeof data.txnid === "string" ? data.txnid : undefined
+      );
 
       setStatusMessage("Connecting to PayU India Hosted Checkout...");
 

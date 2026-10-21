@@ -30,6 +30,7 @@ export interface FreeSubmissionDocument {
   applicantEmailSentAt?: Date;
   teamEmailClaimedAt?: Date;
   teamEmailSentAt?: Date;
+  meta?: { leadClaimedAt?: Date; leadSentAt?: Date };
   createdAt: Date;
   updatedAt: Date;
 }

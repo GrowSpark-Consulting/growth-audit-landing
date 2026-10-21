@@ -18,6 +18,7 @@ import {
   type PayUResponseData,
 } from "@/lib/payu";
 import { processPayUCallback } from "@/lib/payu-callback";
+import { sendPurchaseConversionSafely } from "@/lib/meta-capi";
 import { syncOrderToZohoSafely } from "@/lib/zoho-sync";
 
 export const runtime = "nodejs";
@@ -63,6 +64,8 @@ export async function POST(request: NextRequest) {
       // Lead to "Growth Audit Paid"; repeated callbacks resolve to a no-op.
       const verifiedTxnid = result.txnid;
       after(() => syncOrderToZohoSafely(verifiedTxnid, { lockRetries: 3 }));
+      // Server-side Purchase for a verified payment; sent at most once even if PayU repeats the callback.
+      if (result.status === "PAID") after(() => sendPurchaseConversionSafely(verifiedTxnid));
     }
 
     return NextResponse.redirect(redirectUrl, 303);

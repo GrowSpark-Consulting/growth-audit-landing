@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { MetaTracking } from "@/components/tracking/MetaTracking";
 import { FREE_PAGE_INDEXABLE, FREE_SITE_URL, LANDING_DESCRIPTION, LANDING_TITLE, SITE_NAME } from "@/lib/site";
 import "../../(landing)/landing.css";
 import "./free.css";
@@ -27,7 +28,10 @@ export const viewport: Viewport = {
 export default function FreeLandingLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        {children}
+        <MetaTracking funnel="free" pageView />
+      </body>
     </html>
   );
 }
