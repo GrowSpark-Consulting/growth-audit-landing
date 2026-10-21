@@ -280,3 +280,49 @@ A second variant of the same page with no price, countdown or checkout. It lives
 
 ### SEO
 The free layout sets its canonical and Open Graph URLs to `https://growthaudit-free.growsparkconsulting.com/`; the paid layout is unchanged and the paid host never serves `/free`. The free page is currently **indexable**; set `FREE_PAGE_INDEXABLE = false` in `src/lib/site.ts` to add `noindex`. The two pages are near-duplicates, so keep the self-referencing canonicals.
+
+---
+
+## Meta Pixel and Conversions API
+
+One Pixel serves both landing pages. Every event carries `content_category: "paid"` or `"free"` so the two funnels can be reported separately (for example with Custom Conversions filtered on that parameter).
+
+### Consent
+- Nothing Meta-related runs until the visitor clicks **Accept** in the cookie banner (`src/components/tracking/MetaTracking.tsx`). The choice is stored in the first-party `gs_consent` cookie for 180 days, separately on each hostname.
+- **Decline** keeps the Pixel script unloaded; declining after accepting calls `fbq('consent','revoke')` and deletes `_fbp`/`_fbc`.
+- **Cookie preferences** in the page footer reopens the banner.
+- The server reads the same cookie: without `granted`, no Conversions API event is sent and no tracking data is stored on the order.
+- With no `NEXT_PUBLIC_META_PIXEL_ID`, no banner is shown and no tracking happens.
+
+### Events
+| Event | Browser Pixel | Conversions API | Event ID (deduplication) |
+|---|---|---|---|
+| `PageView` | Paid and free landing pages | - | - |
+| `InitiateCheckout` | After the order is created, just before the PayU redirect (₹999 INR) | - | order `txnid` |
+| `Lead` | Free page, only after the server confirmed the submission was saved | Same moment, from `/api/free-submit` | free `submissionId` |
+| `Purchase` | Thank-you page, only for a server-verified PAID order (₹999 INR) | After the hash-verified PayU callback marks the order PAID | order `txnid` |
+
+- Browser and server copies share the event ID, so Meta counts one.
+- A refreshed thank-you page does not fire `Purchase` again: each event ID is remembered in `localStorage`, and Meta also deduplicates by event ID.
+- Each server event is sent at most once: it is claimed on its MongoDB record (`orders.meta.purchaseSentAt`, `free_submissions.meta.leadSentAt`), so repeated PayU callbacks or retries do not resend it. A failed send releases the claim, and the next trigger (for example a repeated callback) can deliver it.
+- The PayU callback is a cross-site POST that carries none of the site's cookies, so the consented browser identifiers (`_fbp`, `_fbc`, IP, user agent, page URL without its query string) are stored on the order at checkout (`orders.tracking`, only with consent) and used for the server `Purchase`.
+
+### Data sent to Meta
+- **Hashed (SHA-256):** email (trimmed, lower-case), phone (digits with country code; 10-digit numbers get `91`), first and last name (lower-case letters only).
+- **Not hashed (Meta requires them raw):** IP address, user agent, `_fbp`, `_fbc`.
+- **Never sent:** the access token in a URL or log line. It is sent only in the request body.
+
+### Configuration
+| Variable | Where | Notes |
+|---|---|---|
+| `NEXT_PUBLIC_META_PIXEL_ID` | Vercel, Production | Public. Inlined at build time, so redeploy after setting it. |
+| `META_CAPI_ACCESS_TOKEN` | Vercel, Production | Server only. Events Manager -> your Pixel -> Settings -> Conversions API -> Generate access token. |
+| `META_TEST_EVENT_CODE` | Vercel, temporarily | Events Manager -> Test Events code. Server events then appear only under Test Events. Remove it after testing. |
+| `META_GRAPH_API_VERSION` | Optional | Defaults to `v24.0`. |
+
+### Testing with Meta Test Events
+1. Set `META_TEST_EVENT_CODE` and redeploy.
+2. In Events Manager -> Test Events, open the site from the "Test browser events" field, then accept cookies.
+3. Expect `PageView` on load. Submit the free form and expect `Lead` from both Browser and Server, shown as deduplicated. For the paid flow, expect `InitiateCheckout`, then `Purchase` (browser + server) after a PayU sandbox payment. Reload the thank-you page and confirm no second `Purchase`.
+4. Decline cookies in a fresh browser and confirm no events arrive.
+5. Remove `META_TEST_EVENT_CODE` and redeploy.

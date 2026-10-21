@@ -1,7 +1,8 @@
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
 import { getSafeCheckoutErrorClass } from "@/lib/checkout-diagnostics";
 import { isMongoConfigured } from "@/lib/db";
 import { createDefaultFreeDependencies, processFreeSubmission } from "@/lib/free-submissions";
+import { readMetaTrackingContext, sendFreeLeadConversionSafely } from "@/lib/meta-capi";
 import { validateCustomerInput } from "@/lib/orders";
 import { createRateLimiter } from "@/lib/rate-limit";
 import { describeZohoConfigProblem } from "@/lib/zoho";
@@ -47,7 +48,14 @@ export async function POST(request: NextRequest) {
     if (!result.ok) {
       return NextResponse.json({ ok: false, error: ERROR_MESSAGES[result.error] }, { status: result.status });
     }
-    return NextResponse.json({ ok: true });
+    // The saved submission is the Lead: the server event and the browser Pixel share its ID
+    // so Meta deduplicates them. Nothing is sent without marketing-cookie consent.
+    const customer = validation.data;
+    const tracking = readMetaTrackingContext(request.headers);
+    if (tracking) {
+      after(() => sendFreeLeadConversionSafely({ submissionId: result.submissionId, customer }, tracking));
+    }
+    return NextResponse.json({ ok: true, eventId: result.submissionId });
   } catch (error) {
     console.error("[FREE_SUBMIT] Submission failed.", { errorClass: getSafeCheckoutErrorClass(error) });
     return NextResponse.json(

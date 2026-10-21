@@ -1,3 +1,4 @@
+import { CookiePreferencesButton } from "@/components/tracking/MetaTracking";
 import { BrandLogo } from "./Logo";
 
 export function Footer() {
@@ -8,7 +9,9 @@ export function Footer() {
           <BrandLogo />
           <span>Grow Spark Consulting</span>
         </a>
-        <span>© 2026 Grow Spark Consulting</span>
+        <span>
+          © 2026 Grow Spark Consulting <CookiePreferencesButton />
+        </span>
         <span className="foot-note">
           A diagnostic and advisory service. Recommendations are tailored to the information available; business
           outcomes depend on implementation and external conditions.

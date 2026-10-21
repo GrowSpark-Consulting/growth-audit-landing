@@ -1,4 +1,5 @@
-export type FreeSubmitOutcome = { ok: true } | { ok: false; message: string };
+/** eventId is the saved submission's reference, shared with the server-side Meta Lead event. */
+export type FreeSubmitOutcome = { ok: true; eventId?: string } | { ok: false; message: string };
 
 const FALLBACK_ERROR = "We could not save your request. Please review your details and try again.";
 
@@ -18,10 +19,13 @@ export async function submitFreeRequest(
     });
     const data = (await response.json().catch(() => ({}))) as {
       ok?: unknown;
+      eventId?: unknown;
       error?: unknown;
       errors?: unknown;
     };
-    if (response.ok && data.ok === true) return { ok: true };
+    if (response.ok && data.ok === true) {
+      return typeof data.eventId === "string" && data.eventId ? { ok: true, eventId: data.eventId } : { ok: true };
+    }
     if (typeof data.error === "string" && data.error) return { ok: false, message: data.error };
     if (Array.isArray(data.errors) && data.errors.length) {
       return { ok: false, message: data.errors.join(" ") };

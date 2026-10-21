@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { MetaPurchase } from "@/components/tracking/MetaTracking";
 import { findOrderByTxnid } from "@/lib/orders";
 import { verifyOrderVerificationToken } from "@/lib/payu";
 
@@ -40,6 +41,8 @@ export default async function ThankYouPage({ searchParams }: ThankYouPageProps) 
   if (isVerified && order) {
     return (
       <>
+        {/* Rendered only for a server-verified PAID order (valid HMAC token). */}
+        <MetaPurchase eventId={order.txnid} value={order.amount} currency={order.currency} />
         <main>
           <div className="wrap">
             <article className="success-card">

@@ -5,6 +5,7 @@ import {
   isPayUConfigured,
 } from "@/lib/payu";
 import { getSafeCheckoutErrorClass } from "@/lib/checkout-diagnostics";
+import { readMetaTrackingContext } from "@/lib/meta-capi";
 import { syncOrderToZohoSafely } from "@/lib/zoho-sync";
 
 export const runtime = "nodejs";
@@ -44,7 +45,8 @@ export async function POST(request: NextRequest) {
     }
 
     stage = "order_creation";
-    const order = await createOrder(validation.data);
+    // Null unless the visitor accepted marketing cookies; then the Purchase event can be sent server-side.
+    const order = await createOrder(validation.data, readMetaTrackingContext(request.headers) ?? undefined);
     // The submission is persisted; the CRM Lead ("Growth Audit Free") is created
     // after the response so Zoho latency or outages never block checkout.
     after(() => syncOrderToZohoSafely(order.txnid));
