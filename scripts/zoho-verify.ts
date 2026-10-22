@@ -15,6 +15,7 @@ const REQUIRED_FIELDS = [
   "Mobile",
   "Company",
   "Website",
+  "City",
   "Description",
   "Lead_Source",
 ];

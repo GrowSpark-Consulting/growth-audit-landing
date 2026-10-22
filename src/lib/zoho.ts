@@ -15,7 +15,7 @@ const FIRST_NAME_MAX = 40;
 const LAST_NAME_MAX = 80;
 const ACCOUNTS_HOST = /^accounts\.zoho(cloud)?\.[a-z]{2,3}(\.[a-z]{2})?$/;
 const API_HOST = /^(www\.)?zohoapis\.[a-z]{2,3}(\.[a-z]{2})?$/;
-const SEARCH_FIELDS = "First_Name,Last_Name,Email,Mobile,Company,Website,Description,Lead_Source";
+const SEARCH_FIELDS = "First_Name,Last_Name,Email,Mobile,Company,Website,City,Description,Lead_Source";
 
 /** Error whose message is a sanitized code that is safe to log and persist. */
 export class ZohoError extends Error {
@@ -265,6 +265,8 @@ export interface ZohoLeadFields {
   Mobile: string;
   Company: string;
   Website?: string;
+  /** Standard Leads field "Address - City". */
+  City?: string;
   Description: string;
   Lead_Source: string;
 }
@@ -275,6 +277,7 @@ export interface ZohoLeadSnapshot {
   mobile?: string;
   company?: string;
   website?: string;
+  city?: string;
   description?: string;
   leadSource?: string;
 }
@@ -295,6 +298,7 @@ function toLeadSnapshot(lead: JsonObject): ZohoLeadSnapshot | null {
     mobile: getString(lead, "Mobile"),
     company: getString(lead, "Company"),
     website: getString(lead, "Website"),
+    city: getString(lead, "City"),
     description: getString(lead, "Description"),
     leadSource: getString(lead, "Lead_Source"),
   };
@@ -411,10 +415,11 @@ export function splitFullName(fullName: string): {
 }
 
 export function buildLeadDescription(
-  details: Partial<Pick<CustomerData, "team" | "industry" | "revenue" | "businessProblem">>,
+  details: Partial<Pick<CustomerData, "team" | "industry" | "revenue" | "businessProblem" | "challengeDetails">>,
   fullName?: string
 ): string {
-  // Format agreed with the sales team; Zoho Free edition has no custom fields.
+  // Format agreed with the sales team; Zoho Free edition has no custom fields, so the
+  // "Another business challenge" description is appended here rather than in its own field.
   const profile = [
     details.team ? `Team Size: ${details.team}` : "",
     details.industry ? `Industry: ${details.industry}` : "",
@@ -428,7 +433,12 @@ export function buildLeadDescription(
       : "";
     sentences.push(`${profile}${revenue}.`);
   }
-  if (details.businessProblem) sentences.push(`Challenge mentioned: ${details.businessProblem}`);
+  if (details.businessProblem) {
+    const challenge = `Challenge mentioned: ${details.businessProblem}`;
+    sentences.push(
+      details.challengeDetails ? `${challenge}. Challenge description: ${details.challengeDetails}` : challenge
+    );
+  }
   const text = sentences.join(" ");
   return fullName ? `${text}\nFull name: ${fullName}` : text;
 }
@@ -446,6 +456,7 @@ export function mapCustomerToZohoLead(customer: CustomerData, leadSourceValue: s
     Mobile: normalizePhone(customer.phone),
     Company: customer.company,
     ...(customer.website ? { Website: customer.website } : {}),
+    ...(customer.city ? { City: customer.city } : {}),
     Description: buildLeadDescription(customer, name.truncated ? customer.name.trim() : undefined),
     Lead_Source: leadSourceValue,
   };
@@ -500,6 +511,7 @@ function submissionNote(
     `Phone: ${customer.phone}`,
     `Company: ${customer.company}`,
   ];
+  if (customer.city) lines.push(`City: ${customer.city}`);
   if (customer.website) lines.push(`Website: ${customer.website}`);
   lines.push(buildLeadDescription(customer));
   if (previousLeadSource) lines.push(`Previous Lead Source: ${previousLeadSource}`);
@@ -526,6 +538,7 @@ async function mergeIntoExistingLead(
   if (!existing.mobile) patch.Mobile = desired.Mobile;
   if (!existing.company) patch.Company = desired.Company;
   if (!existing.website && desired.Website) patch.Website = desired.Website;
+  if (!existing.city && desired.City) patch.City = desired.City;
   if (!existing.description) patch.Description = desired.Description;
 
   if (Object.keys(patch).length > 0) await updateLead(existing.id, patch);
@@ -534,6 +547,7 @@ async function mergeIntoExistingLead(
     existing.mobile !== desired.Mobile ||
     existing.company !== desired.Company ||
     (existing.website ?? "") !== (desired.Website ?? "") ||
+    (existing.city ?? "") !== (desired.City ?? "") ||
     existing.description !== desired.Description;
   if (submissionDiffers) {
     await addNoteSafely(

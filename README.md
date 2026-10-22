@@ -97,7 +97,11 @@ Every lead-form submission becomes one Zoho CRM Lead, whether or not the custome
 | Email | `Email` |
 | Company name | `Company` |
 | Company website | `Website` (omitted when blank) |
+| City (required, letters only, up to 100 characters) | `City` (standard field "Address - City"). On an existing Lead it is filled only when empty. |
 | Team size, Industry, Annual revenue, Business challenge | `Description`: `Team Size: 16-30 \| Industry: Manufacturing with the annual revenue of ₹1-2 crore. Challenge mentioned: Stuck at the same revenue for years` (no custom fields, which the Zoho Free edition does not support) |
+| Business challenge description (only for "Another business challenge", required then, up to 300 characters) | Appended to `Description`: `... Challenge mentioned: Another business challenge. Challenge description: <text>`. The dropdown value is kept as is. If the CRM is upgraded, a custom field can replace this. |
+
+Annual revenue options: Below ₹50 lakh, ₹50 lakh-₹1 crore, ₹1-2 crore, ₹2-3 crore, ₹3-5 crore, Above ₹5 crore. "Prefer to discuss" was removed; older records that contain it still sync unchanged. The form and the server share these lists through `src/lib/form-options.ts`.
 
 **Duplicate prevention.** Zoho's search index trails new records by roughly a minute (measured at 40–90 seconds), so a missing search result does not prove no Lead exists. Leads are matched in this order:
 1. the order's own stored `zoho.leadId`;

@@ -235,6 +235,7 @@ export function makeCustomer(overrides: Partial<CustomerData> = {}): CustomerDat
     email: "asha@vermatextiles.example",
     company: "Verma Textiles",
     website: "https://vermatextiles.example",
+    city: "Coimbatore",
     team: "16-30",
     industry: "Manufacturing",
     revenue: "₹1-2 crore",

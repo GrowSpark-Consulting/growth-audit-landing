@@ -28,6 +28,10 @@ function escapeHtml(value: string): string {
     .replace(/'/g, "&#39;");
 }
 
+function challengeDescriptionRow(customer: OrderDocument["customer"]): [string, string][] {
+  return customer.challengeDetails ? [["Challenge description", customer.challengeDetails]] : [];
+}
+
 function formatAmount(order: OrderDocument): string {
   return `₹${(order.amount ?? FIXED_ORDER_AMOUNT).toLocaleString("en-IN")}`;
 }
@@ -113,6 +117,7 @@ export async function sendTeamPaymentNotificationEmail(
   const rows: [string, string][] = [
     ["Name", customer.name],
     ["Company", customer.company],
+    ["City", customer.city ?? "-"],
     ["Phone", customer.phone],
     ["Email", customer.email],
     ["Amount", formatAmount(order)],
@@ -121,6 +126,7 @@ export async function sendTeamPaymentNotificationEmail(
     ["Industry", customer.industry],
     ["Revenue", customer.revenue],
     ["Business challenge", customer.businessProblem],
+    ...challengeDescriptionRow(customer),
   ];
   const text = ["New paid Business Growth Audit customer", "", ...rows.map(([k, v]) => `${k}: ${v}`)].join("\n");
   const html = `<div style="font-family:Arial,sans-serif;color:#1a1a1a">
@@ -188,6 +194,7 @@ export async function sendFreeTeamNotificationEmail(
   const rows: [string, string][] = [
     ["Name", customer.name],
     ["Company", customer.company],
+    ["City", customer.city ?? "-"],
     ["Phone", customer.phone],
     ["Email", customer.email],
     ["Website", customer.website ?? "-"],
@@ -195,6 +202,7 @@ export async function sendFreeTeamNotificationEmail(
     ["Industry", customer.industry],
     ["Revenue", customer.revenue],
     ["Business challenge", customer.businessProblem],
+    ...challengeDescriptionRow(customer),
     ["Submission reference", submissionId],
   ];
   const text = ["New free Business Growth Audit request", "", ...rows.map(([k, v]) => `${k}: ${v}`)].join("\n");

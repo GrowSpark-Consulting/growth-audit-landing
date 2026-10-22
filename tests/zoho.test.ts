@@ -53,6 +53,7 @@ test("maps every form field to the agreed Zoho Lead field", () => {
     Mobile: "+919876543210",
     Company: "Verma Textiles",
     Website: "https://vermatextiles.example",
+    City: "Coimbatore",
     Description:
       "Team Size: 16-30 | Industry: Manufacturing with the annual revenue of ₹1-2 crore. " +
       "Challenge mentioned: Stuck at the same revenue for years",

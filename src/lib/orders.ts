@@ -1,41 +1,24 @@
 import { Collection, ObjectId, type Filter, type UpdateFilter } from "mongodb";
 import { randomBytes } from "crypto";
 import { getDb, isMongoConfigured } from "./db";
+import {
+  CHALLENGE_DETAILS_MAX,
+  CHALLENGE_DETAILS_REQUIRED_MESSAGE,
+  CHALLENGES,
+  INDUSTRIES,
+  isValidCity,
+  needsChallengeDetails,
+  normalizeChallengeDetails,
+  normalizeCity,
+  REVENUES,
+  TEAM_SIZES,
+} from "./form-options";
 import type { MetaTrackingContext } from "./meta-capi";
 import { LEAD_SOURCE_PAID, type ZohoLeadSource } from "./zoho";
 
 export const FIXED_ORDER_AMOUNT = 999.0;
 export const FIXED_ORDER_CURRENCY = "INR";
 export const FIXED_PRODUCT_NAME = "Business Growth Audit";
-
-export const TEAM_SIZES = ["1-5", "6-15", "16-30", "31-75", "76+"] as const;
-export const INDUSTRIES = [
-  "Professional services",
-  "Technology & software",
-  "Manufacturing",
-  "Retail & e-commerce",
-  "Healthcare & wellness",
-  "Financial services",
-  "Education & training",
-  "Construction & real estate",
-  "Hospitality & food",
-  "Other",
-] as const;
-export const REVENUES = [
-  "Below ₹50 lakh",
-  "₹50 lakh-₹1 crore",
-  "₹1-2 crore",
-  "₹2-3 crore",
-  "₹3-5 crore",
-  "Above ₹5 crore",
-  "Prefer to discuss",
-] as const;
-export const CHALLENGES = [
-  "Revenue is growing, but profit is not",
-  "Stuck at the same revenue for years",
-  "My revenue is going down every year",
-  "Another business challenge",
-] as const;
 
 export type OrderStatus = "PENDING" | "PAID" | "FAILED" | "CANCELLED";
 
@@ -45,10 +28,14 @@ export interface CustomerData {
   email: string;
   company: string;
   website?: string;
+  /** Required for new submissions; optional here because older records have none. */
+  city?: string;
   team: string;
   industry: string;
   revenue: string;
   businessProblem: string;
+  /** Only when businessProblem is "Another business challenge". */
+  challengeDetails?: string;
 }
 
 export interface PayUDetails {
@@ -187,6 +174,11 @@ export function validateCustomerInput(input: Partial<CustomerData>): {
     website = undefined;
   }
 
+  const city = normalizeCity(input.city);
+  if (!isValidCity(city)) {
+    errors.push("Please enter your city (letters only, up to 100 characters).");
+  }
+
   const team = (input.team ?? "").trim();
   if (!TEAM_SIZES.includes(team as (typeof TEAM_SIZES)[number])) {
     errors.push("Please select a valid team size option.");
@@ -207,6 +199,18 @@ export function validateCustomerInput(input: Partial<CustomerData>): {
     errors.push("Please select a valid business challenge option.");
   }
 
+  // Kept only for "Another business challenge"; a description sent with any other choice is dropped.
+  const challengeDetails = needsChallengeDetails(businessProblem)
+    ? normalizeChallengeDetails(input.challengeDetails)
+    : undefined;
+  if (challengeDetails !== undefined) {
+    if (!challengeDetails) {
+      errors.push(CHALLENGE_DETAILS_REQUIRED_MESSAGE);
+    } else if (challengeDetails.length > CHALLENGE_DETAILS_MAX) {
+      errors.push(`Please keep the business challenge description to ${CHALLENGE_DETAILS_MAX} characters or fewer.`);
+    }
+  }
+
   if (errors.length > 0) {
     return { valid: false, errors };
   }
@@ -220,10 +224,12 @@ export function validateCustomerInput(input: Partial<CustomerData>): {
       email,
       company,
       website,
+      city,
       team,
       industry,
       revenue,
       businessProblem,
+      ...(challengeDetails ? { challengeDetails } : {}),
     },
   };
 }
