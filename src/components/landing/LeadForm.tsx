@@ -24,7 +24,17 @@ import {
 } from "@/lib/meta-pixel";
 import { ChallengeDetailsField } from "./ChallengeDetailsField";
 
-export function LeadForm({ variant = "paid" }: { variant?: "paid" | "free" }) {
+export interface LeadFormProps {
+  variant?: "paid" | "free";
+  thankYouUrl?: string;
+  onSuccess?: (outcome: { ok: true; eventId?: string }) => void;
+}
+
+export function LeadForm({
+  variant = "paid",
+  thankYouUrl = "/growth-audit/thank-you",
+  onSuccess,
+}: LeadFormProps) {
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
@@ -61,10 +71,8 @@ export function LeadForm({ variant = "paid" }: { variant?: "paid" | "free" }) {
     // Success is shown only when the server reports the Lead was saved to the CRM.
     const outcome = await submitFreeRequest(readPayload(form));
     if (outcome.ok) {
-      setStatusMessage(
-        "Thank you. Your request has been received, and our team will be in touch shortly with next steps."
-      );
       setSubmitted(true);
+      setStatusMessage("Thank you. Redirecting to your confirmation...");
       // Only after the server saved it; the eventId pairs this with the server-side Lead.
       trackMetaEvent(
         browserPixelEnvironment(),
@@ -73,14 +81,18 @@ export function LeadForm({ variant = "paid" }: { variant?: "paid" | "free" }) {
         { content_name: META_CONTENT_NAME, content_category: "free" },
         outcome.eventId
       );
+      onSuccess?.(outcome);
+      if (typeof window !== "undefined") {
+        window.location.assign(thankYouUrl);
+      }
     } else {
       setErrorMessage(outcome.message);
       setStatusMessage(null);
+      setSubmitting(false);
+      requestAnimationFrame(() =>
+        messageRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" })
+      );
     }
-    setSubmitting(false);
-    requestAnimationFrame(() =>
-      messageRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" })
-    );
   }
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {

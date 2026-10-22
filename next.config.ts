@@ -10,6 +10,20 @@ const nextConfig: NextConfig = {
     "reassure-among-employed.ngrok-free.dev",
   ],
 
+  async headers() {
+    return [
+      {
+        source: "/growspark-contact.vcf",
+        headers: [
+          {
+            key: "Content-Type",
+            value: "text/vcard; charset=utf-8",
+          },
+        ],
+      },
+    ];
+  },
+
   experimental: {
     // Lets us render a styled 404 with route groups using separate root layouts.
     globalNotFound: true,
