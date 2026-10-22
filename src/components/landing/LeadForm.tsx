@@ -1,6 +1,18 @@
 "use client";
 
 import { useRef, useState, type FormEvent } from "react";
+import {
+  buildLeadPayload,
+  CHALLENGE_DETAILS_REQUIRED_MESSAGE,
+  CHALLENGES,
+  CITY_HTML_PATTERN,
+  CITY_MAX,
+  detailsAfterChallengeChange,
+  INDUSTRIES,
+  needsChallengeDetails,
+  REVENUES,
+  TEAM_SIZES,
+} from "@/lib/form-options";
 import { submitFreeRequest } from "@/lib/free-submit-client";
 import {
   AUDIT_CURRENCY,
@@ -10,35 +22,7 @@ import {
   META_PIXEL_ID,
   trackMetaEvent,
 } from "@/lib/meta-pixel";
-
-const TEAM_SIZES = ["1-5", "6-15", "16-30", "31-75", "76+"];
-const INDUSTRIES = [
-  "Professional services",
-  "Technology & software",
-  "Manufacturing",
-  "Retail & e-commerce",
-  "Healthcare & wellness",
-  "Financial services",
-  "Education & training",
-  "Construction & real estate",
-  "Hospitality & food",
-  "Other",
-];
-const REVENUES = [
-  "Below ₹50 lakh",
-  "₹50 lakh-₹1 crore",
-  "₹1-2 crore",
-  "₹2-3 crore",
-  "₹3-5 crore",
-  "Above ₹5 crore",
-  "Prefer to discuss",
-];
-const CHALLENGES = [
-  "Revenue is growing, but profit is not",
-  "Stuck at the same revenue for years",
-  "My revenue is going down every year",
-  "Another business challenge",
-];
+import { ChallengeDetailsField } from "./ChallengeDetailsField";
 
 export function LeadForm({ variant = "paid" }: { variant?: "paid" | "free" }) {
   const [submitting, setSubmitting] = useState(false);
@@ -47,20 +31,26 @@ export function LeadForm({ variant = "paid" }: { variant?: "paid" | "free" }) {
   const messageRef = useRef<HTMLDivElement>(null);
 
   const [submitted, setSubmitted] = useState(false);
+  const [challenge, setChallenge] = useState("");
+  const [challengeDetails, setChallengeDetails] = useState("");
+  const [detailsError, setDetailsError] = useState<string | null>(null);
 
   function readPayload(form: HTMLFormElement) {
-    const formData = new FormData(form);
-    return {
-      name: formData.get("name"),
-      phone: formData.get("phone"),
-      email: formData.get("email"),
-      company: formData.get("company"),
-      website: formData.get("website") || undefined,
-      team: formData.get("team"),
-      industry: formData.get("industry"),
-      revenue: formData.get("revenue"),
-      businessProblem: formData.get("businessProblem"),
-    };
+    return buildLeadPayload(new FormData(form));
+  }
+
+  function onChallengeChange(next: string) {
+    setChallenge(next);
+    setChallengeDetails((details) => detailsAfterChallengeChange(next, details));
+    setDetailsError(null);
+  }
+
+  function onDetailsChange(value: string, field: HTMLTextAreaElement) {
+    setChallengeDetails(value);
+    // `required` alone accepts spaces only; this makes a blank description invalid too.
+    const blank = !value.trim();
+    field.setCustomValidity(blank ? CHALLENGE_DETAILS_REQUIRED_MESSAGE : "");
+    if (!blank) setDetailsError(null);
   }
 
   /** Free workflow: saved to the CRM server-side; there is no checkout step. */
@@ -107,18 +97,7 @@ export function LeadForm({ variant = "paid" }: { variant?: "paid" | "free" }) {
     setStatusMessage("Preparing your secure checkout session...");
 
     try {
-      const formData = new FormData(form);
-      const payload = {
-        name: formData.get("name"),
-        phone: formData.get("phone"),
-        email: formData.get("email"),
-        company: formData.get("company"),
-        website: formData.get("website") || undefined,
-        team: formData.get("team"),
-        industry: formData.get("industry"),
-        revenue: formData.get("revenue"),
-        businessProblem: formData.get("businessProblem"),
-      };
+      const payload = readPayload(form);
 
       const response = await fetch("/api/payment/initiate", {
         method: "POST",
@@ -248,7 +227,7 @@ export function LeadForm({ variant = "paid" }: { variant?: "paid" | "free" }) {
             disabled={submitting}
           />
         </div>
-        <div className="field">
+        <div className="field full">
           <label htmlFor="website">Company website</label>
           <input
             id="website"
@@ -260,6 +239,20 @@ export function LeadForm({ variant = "paid" }: { variant?: "paid" | "free" }) {
             pattern={String.raw`\s*(https?:\/\/)?([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}(:\d+)?([\/?#]\S*)?\s*`}
             title="Enter a website like www.yourcompany.com"
             placeholder="www.yourcompany.com"
+            disabled={submitting}
+          />
+        </div>
+        <div className="field">
+          <label htmlFor="city">City *</label>
+          <input
+            id="city"
+            name="city"
+            autoComplete="address-level2"
+            maxLength={CITY_MAX}
+            pattern={CITY_HTML_PATTERN}
+            title="Enter your city using letters, for example Coimbatore"
+            placeholder="Enter your city"
+            required
             disabled={submitting}
           />
         </div>
@@ -302,7 +295,8 @@ export function LeadForm({ variant = "paid" }: { variant?: "paid" | "free" }) {
             id="businessProblem"
             name="businessProblem"
             required
-            defaultValue=""
+            value={challenge}
+            onChange={(event) => onChallengeChange(event.target.value)}
             disabled={submitting}
           >
             <option value="" disabled>
@@ -313,6 +307,15 @@ export function LeadForm({ variant = "paid" }: { variant?: "paid" | "free" }) {
             ))}
           </select>
         </div>
+        {needsChallengeDetails(challenge) && (
+          <ChallengeDetailsField
+            value={challengeDetails}
+            error={detailsError}
+            disabled={submitting}
+            onChange={onDetailsChange}
+            onInvalid={() => setDetailsError(CHALLENGE_DETAILS_REQUIRED_MESSAGE)}
+          />
+        )}
       </div>
       <button className="btn" type="submit" disabled={submitting || submitted}>
         {variant === "free" ? (

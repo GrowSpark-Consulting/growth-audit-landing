@@ -50,10 +50,12 @@ export function buildPayloadHash(customer: CustomerData): string {
     customer.email,
     customer.company,
     customer.website ?? "",
+    customer.city ?? "",
     customer.team,
     customer.industry,
     customer.revenue,
     customer.businessProblem,
+    customer.challengeDetails ?? "",
   ].map((value) => value.trim().toLowerCase());
   return createHash("sha256").update(JSON.stringify(normalized)).digest("hex");
 }

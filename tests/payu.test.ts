@@ -214,6 +214,7 @@ test("validateCustomerInput: enforces validation rules and normalizes fields", (
     email: "  RAJA@GrowSparkConsulting.com  ",
     company: "Grow Spark Consulting",
     website: "https://growsparkconsulting.com",
+    city: "Chennai",
     team: "6-15",
     industry: "Professional services",
     revenue: "₹50 lakh-₹1 crore",
