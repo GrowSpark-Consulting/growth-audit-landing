@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { GoogleTag } from "@/components/tracking/GoogleTag";
 import { MetaTracking } from "@/components/tracking/MetaTracking";
 import { SITE_NAME, SITE_URL } from "@/lib/site";
 import "./thank-you.css";
@@ -21,6 +22,9 @@ export const viewport: Viewport = {
 export default function ThankYouLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
+      <head>
+        <GoogleTag />
+      </head>
       <body>
         {children}
         {/* Consent banner only; the verified Purchase event is rendered by the page itself. */}
